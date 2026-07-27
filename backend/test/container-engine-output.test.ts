@@ -5,6 +5,7 @@ import {
     parseComposePsOutput,
     parseContainerPsOutput,
     parseNetworkListOutput,
+    parsePodmanComposeListOutput,
     parseStatsOutput,
 } from "../container-engine/output-parser";
 
@@ -22,6 +23,52 @@ test("Compose list output accepts a JSON array", () => {
 test("Compose list output rejects malformed overall non-array payloads", () => {
     assert.deepEqual(parseComposeListOutput("{ \"Name\": \"demo\", \"Status\": \"running(1)\" }"), []);
     assert.deepEqual(parseComposeListOutput("{ \"Name\": \"demo\", \"Status\": \"running(1)\" }\n{ \"Name\": \"other\", \"Status\": \"running(1)\" }"), []);
+});
+
+test("Podman container inventory groups Compose-labelled containers by project", () => {
+    const output = JSON.stringify([
+        { Labels: { "com.docker.compose.project": "demo" },
+            State: "running" },
+        { Labels: { "com.docker.compose.project": "demo" },
+            State: "exited" },
+        { Labels: { "com.docker.compose.project": "demo" },
+            State: "running",
+            IsInfra: true },
+        { Labels: { "com.docker.compose.project": "other" },
+            State: "created" },
+        { Labels: { "com.docker.compose.project": "other" },
+            State: "configured" },
+        { Labels: { "com.docker.compose.project": "stopped" },
+            State: "stopped" },
+    ]);
+
+    assert.deepEqual(parsePodmanComposeListOutput(output), [
+        { Name: "demo",
+            Status: "exited(1), running(1)" },
+        { Name: "other",
+            Status: "created(2)" },
+        { Name: "stopped",
+            Status: "exited(1)" },
+    ]);
+});
+
+test("Podman container inventory ignores malformed labels, states, and stack names", () => {
+    const output = JSON.stringify([
+        { Labels: null,
+            State: "running" },
+        { Labels: { "com.docker.compose.project": "bad/name" },
+            State: "running" },
+        { Labels: { "com.docker.compose.project": "missing-state" } },
+        { Labels: { "com.docker.compose.project": "good" },
+            State: "paused" },
+        { Labels: { "com.docker.compose.project": 1 },
+            State: "running" },
+    ]);
+
+    assert.deepEqual(parsePodmanComposeListOutput(output), [
+        { Name: "good",
+            Status: "paused(1)" },
+    ]);
 });
 
 test("Compose ps output accepts both JSON array and newline-delimited JSON", () => {
@@ -51,6 +98,21 @@ test("direct container ps output accepts newline-delimited JSON", () => {
     ];
 
     assert.deepEqual(parseContainerPsOutput(rows.map((row) => JSON.stringify(row)).join("\n")), rows);
+});
+
+test("direct container ps output ignores Podman pod infra containers", () => {
+    const output = [
+        { ID: "infra",
+            Status: "Up 2 minutes",
+            IsInfra: true },
+        { ID: "service",
+            Status: "Exited (0) 1 minute ago" },
+    ].map((row) => JSON.stringify(row)).join("\n");
+
+    assert.deepEqual(parseContainerPsOutput(output), [
+        { ID: "service",
+            Status: "Exited (0) 1 minute ago" },
+    ]);
 });
 
 test("network output removes blank lines and sorts names", () => {
@@ -93,6 +155,7 @@ test("output parsers safely ignore empty output and malformed individual lines",
 
     assert.deepEqual(parseComposeListOutput(""), []);
     assert.deepEqual(parseComposeListOutput("not json"), []);
+    assert.deepEqual(parsePodmanComposeListOutput("not json"), []);
     assert.deepEqual(parseComposePsOutput(""), []);
     assert.deepEqual(parseComposePsOutput(`${JSON.stringify(composeRow)}\nnot json\nnull`), [ composeRow ]);
     assert.deepEqual(parseContainerPsOutput(""), []);

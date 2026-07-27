@@ -164,7 +164,7 @@ test("Podman builds the same normalized operations with Podman's remote socket f
     });
     assert.deepEqual(engine.composeList(), {
         file: "podman",
-        args: [ "--url", "unix:///run/podman/podman.sock", "compose", "ls", "--all", "--format", "json" ],
+        args: [ "--url", "unix:///run/podman/podman.sock", "ps", "-a", "--filter", "label=com.docker.compose.project", "--format", "json" ],
     });
     assert.deepEqual(engine.containerStatus("example-stack"), {
         file: "podman",

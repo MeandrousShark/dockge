@@ -34,6 +34,7 @@ import {
     parseComposeListOutput,
     parseComposePsOutput,
     parseContainerPsOutput,
+    parsePodmanComposeListOutput,
 } from "./container-engine/output-parser";
 
 // For getSingleComposeStatus and general compose stack objects
@@ -401,17 +402,7 @@ export class Stack {
             this.managedStackList = new Map(stackList);
         }
 
-        // Get status from docker compose ls
-        const command = server.containerEngine.composeList();
-        let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
-            encoding: "utf-8",
-        });
-
-        if (!res.stdout) {
-            return stackList;
-        }
-
-        const composeList = parseComposeListOutput(res.stdout.toString());
+        const composeList = await this.getComposeList(server);
 
         for (let composeStack of composeList) {
             let stack = stackList.get(composeStack.Name);
@@ -440,22 +431,40 @@ export class Stack {
     static async getStatusList(server: DockgeServer) : Promise<Map<string, number>> {
         let statusList = new Map<string, number>();
 
-        const command = server.containerEngine.composeList();
-        let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
-            encoding: "utf-8",
-        });
-
-        if (!res.stdout) {
-            return statusList;
-        }
-
-        const composeList = parseComposeListOutput(res.stdout.toString());
+        const composeList = await this.getComposeList(server);
 
         for (let composeStack of composeList) {
             statusList.set(composeStack.Name, await this.statusConvert(server, composeStack));
         }
 
         return statusList;
+    }
+
+    /**
+     * Docker lists Compose projects through `compose ls`; Podman lists the
+     * labelled containers directly because podman-compose 1.3.0 has no `ls`.
+     * A failed inventory must not reject the periodic agent status poll.
+     */
+    private static async getComposeList(server: DockgeServer): Promise<ComposeStack[]> {
+        try {
+            const command = server.containerEngine.composeList();
+            const res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
+                encoding: "utf-8",
+            });
+
+            if (!res.stdout) {
+                return [];
+            }
+
+            const stdout = res.stdout.toString();
+            return server.containerEngine.kind === "podman"
+                ? parsePodmanComposeListOutput(stdout)
+                : parseComposeListOutput(stdout);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "unknown error";
+            log.warn("getComposeList", `Failed to get Compose project list: ${message}`);
+            return [];
+        }
     }
 
     /**
