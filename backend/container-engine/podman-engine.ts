@@ -34,7 +34,10 @@ export class PodmanEngine implements ContainerEngine {
     }
 
     composeList(): EngineCommand {
-        return this.compose("ls", "--all", "--format", "json");
+        // podman-compose 1.3.0 does not implement `compose ls`. Compose
+        // containers carry this label, so the Podman API can provide the same
+        // project inventory without depending on a provider-specific command.
+        return this.build([ "ps", "-a", "--filter", "label=com.docker.compose.project", "--format", "json" ]);
     }
 
     containerStatus(projectName: string): EngineCommand {
