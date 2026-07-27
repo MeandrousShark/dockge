@@ -7,6 +7,9 @@ import { R } from "redbean-node";
 import { verifyPassword } from "./password-hash";
 import fs from "fs";
 import { AgentManager } from "./agent-manager";
+import { ValidationError } from "./validation-error";
+
+export { ValidationError } from "./validation-error";
 
 export interface JWTDecoded {
     username : string;
@@ -42,12 +45,6 @@ export interface Config extends Arguments {
 export function checkLogin(socket : DockgeSocket) {
     if (!socket.userID) {
         throw new Error("You are not logged in.");
-    }
-}
-
-export class ValidationError extends Error {
-    constructor(message : string) {
-        super(message);
     }
 }
 
