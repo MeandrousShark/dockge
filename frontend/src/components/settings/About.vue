@@ -6,6 +6,28 @@
             <div>{{ $t("Version") }}: {{ $root.info.version }}</div>
             <div class="frontend-version">{{ $t("Frontend Version") }}: {{ $root.frontendVersion }}</div>
 
+            <div v-if="engineInfoEntries.length" class="engine-info text-start mt-4">
+                <div v-for="entry in engineInfoEntries" :key="entry.endpoint" class="engine-info-entry">
+                    <div class="fw-bold mb-2">{{ entry.name }}</div>
+                    <dl class="row mb-0 small">
+                        <dt class="col-sm-5">{{ $t("Container Engine") }}</dt>
+                        <dd class="col-sm-7">{{ engineName(entry.info.kind) }}</dd>
+                        <dt class="col-sm-5">{{ $t("Engine Version") }}</dt>
+                        <dd class="col-sm-7">{{ entry.info.version || $t("notAvailableShort") }}</dd>
+                        <dt class="col-sm-5">{{ $t("Compose Provider") }}</dt>
+                        <dd class="col-sm-7">{{ entry.info.composeProvider || $t("notAvailableShort") }}</dd>
+                        <dt class="col-sm-5">{{ $t("Compose Provider Version") }}</dt>
+                        <dd class="col-sm-7">{{ entry.info.composeProviderVersion || $t("notAvailableShort") }}</dd>
+                    </dl>
+                    <div v-if="entry.info.warnings && entry.info.warnings.length" class="alert alert-warning py-2 mb-0 small" role="alert">
+                        <div class="fw-bold">{{ $t("Capability Warnings") }}</div>
+                        <ul class="mb-0 ps-3">
+                            <li v-for="warning in entry.info.warnings" :key="warning">{{ warning }}</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
             <div v-if="!$root.isFrontendBackendVersionMatched" class="alert alert-warning mt-4" role="alert">
                 ⚠️ {{ $t("Frontend Version do not match backend version!") }}
             </div>
@@ -37,11 +59,41 @@ export default {
         settingsLoaded() {
             return this.$parent.$parent.$parent.settingsLoaded;
         },
+        engineInfoEntries() {
+            const entries = [];
+            const current = this.$root.info.containerEngine;
+
+            if (current) {
+                entries.push({
+                    endpoint: "",
+                    name: this.$t("currentEndpoint"),
+                    info: current,
+                });
+            }
+
+            for (const [ endpoint, info ] of Object.entries(this.$root.agentInfo)) {
+                if (info && info.containerEngine) {
+                    entries.push({
+                        endpoint,
+                        name: this.$root.endpointDisplayFunction(endpoint) || endpoint,
+                        info: info.containerEngine,
+                    });
+                }
+            }
+
+            return entries;
+        },
     },
 
-    watch: {
+    methods: {
+        engineName(kind) {
+            if (typeof kind !== "string" || kind.length === 0) {
+                return this.$t("notAvailableShort");
+            }
 
-    }
+            return kind.charAt(0).toUpperCase() + kind.slice(1);
+        },
+    },
 };
 </script>
 
@@ -61,6 +113,16 @@ export default {
     .dark & {
         color: #333333;
     }
+}
+
+.engine-info {
+    width: min(100%, 32rem);
+}
+
+.engine-info-entry + .engine-info-entry {
+    border-top: 1px solid var(--bs-border-color);
+    margin-top: 1rem;
+    padding-top: 1rem;
 }
 
 </style>

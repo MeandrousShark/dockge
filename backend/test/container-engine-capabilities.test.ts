@@ -102,6 +102,26 @@ test("Podman capability detection parses JSON-style version output and retains t
     ]);
 });
 
+test("Podman Compose provider detection ignores the engine version in multiline provider output", async () => {
+    const engine = createContainerEngine(parseContainerEngineConfig({
+        DOCKGE_CONTAINER_ENGINE: "podman",
+        DOCKGE_COMPOSE_PROVIDER: "podman-compose",
+    }));
+    const runner = new FakeCommandRunner([
+        commandResult("5.4.2\n"),
+        commandResult("podman version 5.4.2\npodman-compose version 1.3.0\n"),
+    ]);
+
+    const capabilities = await detectContainerEngineCapabilities(engine, runner);
+
+    assert.deepEqual(capabilities, {
+        engineVersion: "5.4.2",
+        composeProvider: "podman-compose",
+        composeProviderVersion: "1.3.0",
+        warnings: [],
+    });
+});
+
 test("capability detection reports unavailable probes independently without preventing startup", async () => {
     const engine = createContainerEngine(parseContainerEngineConfig({
         DOCKGE_CONTAINER_ENGINE: "podman",

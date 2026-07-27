@@ -52,6 +52,9 @@ export async function detectContainerEngineCapabilities(engine: ContainerEngine,
     const warnings: string[] = [];
     let engineVersion: string | undefined;
     let composeProviderVersion: string | undefined;
+    const composeProvider = engine.config.composeProvider === "auto"
+        ? (engine.kind === "docker" ? "docker-compose" : "podman-compose")
+        : engine.config.composeProvider;
 
     try {
         const result = await runner.run(engine.version());
@@ -65,17 +68,13 @@ export async function detectContainerEngineCapabilities(engine: ContainerEngine,
 
     try {
         const result = await runner.run(engine.compose("version"));
-        composeProviderVersion = parseVersion(result.stdout);
+        composeProviderVersion = parseComposeProviderVersion(result.stdout, composeProvider);
         if (result.exitCode !== 0 || !composeProviderVersion) {
             warnings.push("Unable to determine Compose provider version");
         }
     } catch {
         warnings.push("Unable to run Compose provider version probe");
     }
-
-    const composeProvider = engine.config.composeProvider === "auto"
-        ? (engine.kind === "docker" ? "docker-compose" : "podman-compose")
-        : engine.config.composeProvider;
 
     return Object.freeze({
         ...(engineVersion === undefined ? {} : { engineVersion }),
@@ -88,6 +87,21 @@ export async function detectContainerEngineCapabilities(engine: ContainerEngine,
 /** Extract the first conventional dotted version, with an optional v prefix. */
 export function parseVersion(stdout: string): string | undefined {
     return stdout.match(/(?:\bv)?(\d+(?:\.\d+)+(?:[-+][0-9A-Za-z.-]+)?)\b/)?.[1];
+}
+
+/** Extract a Compose provider version from the line that identifies that provider. */
+export function parseComposeProviderVersion(stdout: string, composeProvider: ComposeProvider): string | undefined {
+    const providerPattern = composeProvider === "docker-compose"
+        ? /docker[ -]?compose/i
+        : /podman[ -]?compose/i;
+
+    for (const line of stdout.split(/\r?\n/)) {
+        if (providerPattern.test(line)) {
+            return parseVersion(line);
+        }
+    }
+
+    return undefined;
 }
 
 function parseEnum<T extends string>(name: string, value: string | undefined, allowed: readonly T[], defaultValue: T): T {
