@@ -203,8 +203,14 @@ export class AgentManager {
             this.socket.emit("agent", ...args);
         });
 
-        client.on("info", (res) => {
+        client.on("info", (res : LooseObject) => {
             log.debug("agent-manager", res);
+
+            // The unauthenticated info event intentionally hides version and
+            // capabilities. Only relay the post-login payload to the browser.
+            if (typeof res.version !== "string") {
+                return;
+            }
 
             // Disconnect if the version is lower than 1.4.0
             if (!isDev && semver.satisfies(res.version, "< 1.4.0")) {
@@ -214,7 +220,13 @@ export class AgentManager {
                     msg: `${endpoint}: Unsupported version: ` + res.version,
                 });
                 client.disconnect();
+                return;
             }
+
+            this.socket.emit("agent", "info", {
+                ...res,
+                endpoint,
+            });
         });
 
         this.agentSocketList[endpoint] = client;

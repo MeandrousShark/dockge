@@ -243,6 +243,7 @@ export class MainSocketHandler extends SocketHandler {
                 }
 
                 log.info("auth", `Agent service-token login succeeded. IP=${clientIP}`);
+                await server.sendInfo(socket);
                 callback({ ok: true });
                 return;
             }

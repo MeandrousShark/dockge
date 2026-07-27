@@ -521,14 +521,26 @@ export class DockgeServer {
             isContainer = (process.env.DOCKGE_IS_CONTAINER === "1");
         }
 
-        socket.emit("info", {
+        const info: LooseObject = {
             version: versionProperty,
             latestVersion: latestVersionProperty,
             isContainer,
             primaryHostname: await Settings.get("primaryHostname"),
             //serverTimezone: await this.getTimezone(),
             //serverTimezoneOffset: this.getTimezoneOffset(),
-        });
+        };
+
+        if (!hideVersion) {
+            info.containerEngine = {
+                kind: this.containerEngine.kind,
+                ...(this.containerEngineCapabilities?.engineVersion === undefined ? {} : { version: this.containerEngineCapabilities.engineVersion }),
+                composeProvider: this.containerEngineCapabilities?.composeProvider ?? (this.containerEngine.kind === "docker" ? "docker-compose" : "podman-compose"),
+                ...(this.containerEngineCapabilities?.composeProviderVersion === undefined ? {} : { composeProviderVersion: this.containerEngineCapabilities.composeProviderVersion }),
+                warnings: this.containerEngineCapabilities?.warnings ?? [],
+            };
+        }
+
+        socket.emit("info", info);
     }
 
     /**

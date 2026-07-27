@@ -25,6 +25,7 @@ export default defineComponent({
             info: {
 
             },
+            agentInfo: {} as Record<string, object>,
             remember: (localStorage.remember !== "0"),
             loggedIn: false,
             allowLoginDialog: false,
@@ -261,6 +262,12 @@ export default defineComponent({
                         }
                         this.allAgentStackList[res.endpoint].stackList = res.stackList;
                     }
+                }
+            });
+
+            agentSocket.on("info", (info) => {
+                if (info && typeof info.endpoint === "string" && info.endpoint) {
+                    this.agentInfo[info.endpoint] = info;
                 }
             });
 
