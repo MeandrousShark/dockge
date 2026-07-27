@@ -22,6 +22,13 @@ import { genSecret, isDev, LooseObject } from "../common/util-common";
 import { generatePasswordHash } from "./password-hash";
 import { Bean } from "redbean-node/dist/bean";
 import { Arguments, Config, DockgeSocket } from "./util-server";
+import {
+    AgentServiceTokenConfig,
+    isAllowedAgentOnlyEvent,
+    isConfiguredAgentServiceTokenEndpoint,
+    parseAgentServiceTokenPolicy,
+    verifyAgentServiceToken,
+} from "./agent-service-token";
 import { DockerSocketHandler } from "./agent-socket-handlers/docker-socket-handler";
 import expressStaticGzip from "express-static-gzip";
 import path from "path";
@@ -37,6 +44,17 @@ import { AgentSocketHandler } from "./agent-socket-handler";
 import { AgentSocket } from "../common/agent-socket";
 import { ManageAgentSocketHandler } from "./socket-handlers/manage-agent-socket-handler";
 import { Terminal } from "./terminal";
+import {
+    createContainerEngine,
+    detectContainerEngineCapabilities,
+    parseContainerEngineConfig,
+} from "./container-engine/container-engine";
+import type { ContainerEngine, ContainerEngineCapabilities } from "./container-engine/container-engine";
+import { SpawnCommandRunner } from "./container-engine/command-runner";
+import {
+    parseNetworkListOutput,
+    parseStatsOutput,
+} from "./container-engine/output-parser";
 
 export class DockgeServer {
     app : Express;
@@ -44,6 +62,8 @@ export class DockgeServer {
     packageJSON : PackageJson;
     io : socketIO.Server;
     config : Config;
+    containerEngine : ContainerEngine;
+    containerEngineCapabilities?: ContainerEngineCapabilities;
     indexHTML : string = "";
 
     /**
@@ -77,6 +97,9 @@ export class DockgeServer {
     needSetup = false;
 
     jwtSecret : string = "";
+
+    agentServiceTokenConfig?: AgentServiceTokenConfig;
+    agentOnly = false;
 
     stacksDir : string = "";
 
@@ -156,6 +179,29 @@ export class DockgeServer {
         this.config.stacksDir = args.stacksDir || process.env.DOCKGE_STACKS_DIR || defaultStacksDir;
         this.config.enableConsole = args.enableConsole || process.env.DOCKGE_ENABLE_CONSOLE === "true" || false;
         this.stacksDir = this.config.stacksDir;
+
+        const agentServiceTokenPolicy = parseAgentServiceTokenPolicy();
+        this.agentOnly = agentServiceTokenPolicy.agentOnly;
+        this.agentServiceTokenConfig = agentServiceTokenPolicy.config;
+        if (this.agentOnly && this.config.enableConsole) {
+            throw new Error("DOCKGE_AGENT_ONLY=true requires DOCKGE_ENABLE_CONSOLE=false.");
+        }
+        if (process.env.DOCKGE_AGENT_ENDPOINT_ID || process.env.DOCKGE_AGENT_TOKEN_SHA256) {
+            if (this.agentOnly && this.agentServiceTokenConfig) {
+                log.info("auth", "Agent service-token authentication enabled for endpoint " + this.agentServiceTokenConfig.endpoint);
+            } else if (this.agentServiceTokenConfig) {
+                log.warn("auth", "Agent service-token configuration is ignored unless DOCKGE_AGENT_ONLY=true");
+            } else {
+                log.error("auth", "Agent service-token authentication is disabled because its endpoint ID or SHA-256 digest is invalid or incomplete");
+            }
+        }
+
+        const containerEngineConfig = parseContainerEngineConfig();
+        this.containerEngine = createContainerEngine(containerEngineConfig);
+        log.info(
+            "container-engine",
+            `Selected ${this.containerEngine.kind} engine (requested: ${containerEngineConfig.engine}, binary: ${this.containerEngine.networkList().file}, socket: ${containerEngineConfig.socket ? "configured" : "default"}, compose provider: ${containerEngineConfig.composeProvider})`,
+        );
 
         log.debug("server", this.config);
 
@@ -272,9 +318,25 @@ export class DockgeServer {
                 log.info("server", "Socket connected (direct)");
             }
 
+            if (this.agentOnly && !this.isConfiguredAgentServiceTokenEndpoint(dockgeSocket)) {
+                log.warn("auth", "Rejected socket without the configured agent endpoint header");
+                dockgeSocket.disconnect(true);
+                return;
+            }
+
+            if (this.agentOnly) {
+                dockgeSocket.use((event, next) => {
+                    if (!isAllowedAgentOnlyEvent(event[0])) {
+                        next(new Error("This endpoint accepts only agent service-token requests."));
+                        return;
+                    }
+                    next();
+                });
+            }
+
             this.sendInfo(dockgeSocket, true);
 
-            if (this.needSetup) {
+            if (this.needSetup && !this.agentOnly) {
                 log.info("server", "Redirect to setup page");
                 dockgeSocket.emit("setup");
             }
@@ -300,7 +362,7 @@ export class DockgeServer {
             // ***************************
 
             log.debug("auth", "check auto login");
-            if (await Settings.get("disableAuth")) {
+            if (await Settings.get("disableAuth") && !this.agentOnly && !this.isConfiguredAgentServiceTokenEndpoint(dockgeSocket)) {
                 log.info("auth", "Disabled Auth: auto login to admin");
                 this.afterLogin(dockgeSocket, await R.findOne("user") as User);
                 dockgeSocket.emit("autoLogin");
@@ -345,6 +407,21 @@ export class DockgeServer {
         socket.instanceManager.connectAll();
     }
 
+    isConfiguredAgentServiceTokenEndpoint(socket: DockgeSocket) {
+        return isConfiguredAgentServiceTokenEndpoint(this.agentServiceTokenConfig, socket.endpoint);
+    }
+
+    authorizeAgentServiceToken(socket: DockgeSocket, token: unknown) {
+        if (!verifyAgentServiceToken(this.agentServiceTokenConfig, socket.endpoint, token)) {
+            return false;
+        }
+
+        // This capability is deliberately not a user login. AgentProxy is the
+        // only handler which recognizes agentEndpoint.
+        socket.agentEndpoint = this.agentServiceTokenConfig?.endpoint;
+        return true;
+    }
+
     /**
      *
      */
@@ -360,6 +437,16 @@ export class DockgeServer {
                 log.error("server", "Failed to prepare your database: " + e.message);
             }
             process.exit(1);
+        }
+
+        this.containerEngineCapabilities = await detectContainerEngineCapabilities(this.containerEngine, new SpawnCommandRunner());
+        const capabilities = this.containerEngineCapabilities;
+        log.info(
+            "container-engine",
+            `Detected ${this.containerEngine.kind} ${capabilities.engineVersion ?? "version unknown"}; Compose provider ${capabilities.composeProvider} ${capabilities.composeProviderVersion ?? "version unknown"}`,
+        );
+        for (const warning of capabilities.warnings) {
+            log.warn("container-engine", warning);
         }
 
         // First time setup if needed
@@ -594,7 +681,7 @@ export class DockgeServer {
             let dockgeSocket = socket as DockgeSocket;
 
             // Check if the room is a number (user id)
-            if (dockgeSocket.userID) {
+            if (dockgeSocket.userID || dockgeSocket.agentEndpoint) {
 
                 // Get the list only if there is a logged in user
                 if (!stackList) {
@@ -617,7 +704,8 @@ export class DockgeServer {
     }
 
     async getDockerNetworkList() : Promise<string[]> {
-        let res = await childProcessAsync.spawn("docker", [ "network", "ls", "--format", "{{.Name}}" ], {
+        const command = this.containerEngine.networkList();
+        let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
             encoding: "utf-8",
         });
 
@@ -625,23 +713,15 @@ export class DockgeServer {
             return [];
         }
 
-        let list = res.stdout.toString().split("\n");
-
-        // Remove empty string item
-        list = list.filter((item) => {
-            return item !== "";
-        }).sort((a, b) => {
-            return a.localeCompare(b);
-        });
-
-        return list;
+        return parseNetworkListOutput(res.stdout.toString());
     }
 
     async getDockerStats() : Promise<Map<string, object>> {
         let stats = new Map<string, object>();
 
         try {
-            let res = await childProcessAsync.spawn("docker", [ "stats", "--format", "json", "--no-stream" ], {
+            const command = this.containerEngine.stats();
+            let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
                 encoding: "utf-8",
             });
 
@@ -649,17 +729,7 @@ export class DockgeServer {
                 return stats;
             }
 
-            let lines = res.stdout?.toString().split("\n");
-
-            for (let line of lines) {
-                try {
-                    let obj = JSON.parse(line);
-                    stats.set(obj.Name, obj);
-                } catch (e) {
-                }
-            }
-
-            return stats;
+            return parseStatsOutput(res.stdout.toString());
         } catch (e) {
             log.error("getDockerStats", e);
             return stats;

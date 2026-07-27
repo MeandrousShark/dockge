@@ -7,6 +7,10 @@ import { R } from "redbean-node";
 import { verifyPassword } from "./password-hash";
 import fs from "fs";
 import { AgentManager } from "./agent-manager";
+import { ValidationError } from "./validation-error";
+import { isAuthorizedAgentProxyRequest } from "./agent-service-token";
+
+export { ValidationError } from "./validation-error";
 
 export interface JWTDecoded {
     username : string;
@@ -15,6 +19,14 @@ export interface JWTDecoded {
 
 export interface DockgeSocket extends Socket {
     userID: number;
+    /**
+     * Set only after a successful scoped agent service-token login. It is
+     * intentionally distinct from userID so the socket never gains a user
+     * session or access to ordinary authenticated handlers.
+     */
+    agentEndpoint?: string;
+    /** Set only while AgentProxy invokes an agent handler for a token socket. */
+    agentProxyEndpoint?: string;
     consoleTerminal? : Terminal;
     instanceManager : AgentManager;
     endpoint : string;
@@ -40,15 +52,26 @@ export interface Config extends Arguments {
 }
 
 export function checkLogin(socket : DockgeSocket) {
-    if (!socket.userID) {
-        throw new Error("You are not logged in.");
+    if (socket.userID) {
+        return;
     }
+
+    // A service-token socket receives this temporary marker only from
+    // AgentProxy while it invokes a registered agent handler. It does not make
+    // regular socket handlers authenticated.
+    if (socket.agentEndpoint && socket.agentProxyEndpoint === socket.agentEndpoint) {
+        return;
+    }
+
+    throw new Error("You are not logged in.");
 }
 
-export class ValidationError extends Error {
-    constructor(message : string) {
-        super(message);
+export function checkAgentProxyLogin(socket : DockgeSocket, endpoint: string) {
+    if (isAuthorizedAgentProxyRequest(socket.userID, socket.agentEndpoint, endpoint)) {
+        return;
     }
+
+    throw new Error("You are not authorized to use the agent proxy.");
 }
 
 export function callbackError(error : unknown, callback : unknown) {

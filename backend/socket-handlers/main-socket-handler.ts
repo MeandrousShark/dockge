@@ -183,6 +183,70 @@ export class MainSocketHandler extends SocketHandler {
         socket.on("login", async (data, callback) => {
             const clientIP = await server.getClientIP(socket);
 
+            if (typeof callback !== "function") {
+                return;
+            }
+
+            if (!data || typeof data !== "object") {
+                callback({
+                    ok: false,
+                    msg: "Login data must be an object.",
+                });
+                return;
+            }
+
+            if (server.agentOnly && data.authMode !== "token") {
+                callback({
+                    ok: false,
+                    msg: "This endpoint accepts only agent service-token login.",
+                });
+                return;
+            }
+
+            if (data.authMode === "token") {
+                if (!server.agentOnly) {
+                    callback({
+                        ok: false,
+                        msg: "Agent service-token login requires agent-only mode.",
+                    });
+                    return;
+                }
+
+                if (!server.agentServiceTokenConfig) {
+                    callback({
+                        ok: false,
+                        msg: "Agent service-token authentication is not configured.",
+                    });
+                    return;
+                }
+
+                if (!server.isConfiguredAgentServiceTokenEndpoint(socket)) {
+                    callback({
+                        ok: false,
+                        msg: "This socket is not the configured agent endpoint.",
+                    });
+                    return;
+                }
+
+                if (!await loginRateLimiter.pass(callback)) {
+                    log.info("auth", `Too many agent service-token login attempts. IP=${clientIP}`);
+                    return;
+                }
+
+                if (!server.authorizeAgentServiceToken(socket, data.token)) {
+                    log.warn("auth", `Invalid agent service-token login. IP=${clientIP}`);
+                    callback({
+                        ok: false,
+                        msg: "Invalid agent service token.",
+                    });
+                    return;
+                }
+
+                log.info("auth", `Agent service-token login succeeded. IP=${clientIP}`);
+                callback({ ok: true });
+                return;
+            }
+
             log.info("auth", `Login by username + password. IP=${clientIP}`);
 
             const siteKey = process.env.TURNSTILE_SITE_KEY || "";
@@ -198,15 +262,6 @@ export class MainSocketHandler extends SocketHandler {
                 }
             } else {
                 log.warn("auth", "Turnstile keys are not configured. Skipping CAPTCHA verification.");
-            }
-
-            // Checking
-            if (typeof callback !== "function") {
-                return;
-            }
-
-            if (!data) {
-                return;
             }
 
             // Login Rate Limit

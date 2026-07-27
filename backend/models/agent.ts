@@ -18,12 +18,32 @@ export class Agent extends BeanModel {
         return obj.host;
     }
 
+    get authMode() : "password" | "token" {
+        return this.auth_mode === "token" ? "token" : "password";
+    }
+
+    get credentials() {
+        if (this.authMode === "token") {
+            return {
+                authMode: "token" as const,
+                token: this.token,
+            };
+        }
+
+        return {
+            authMode: "password" as const,
+            username: this.username,
+            password: this.password,
+        };
+    }
+
     toJSON() : LooseObject {
         return {
             url: this.url,
             username: this.username,
             endpoint: this.endpoint,
             name: this.name,
+            authMode: this.authMode,
         };
     }
 
