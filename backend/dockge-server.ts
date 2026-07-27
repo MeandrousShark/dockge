@@ -22,6 +22,13 @@ import { genSecret, isDev, LooseObject } from "../common/util-common";
 import { generatePasswordHash } from "./password-hash";
 import { Bean } from "redbean-node/dist/bean";
 import { Arguments, Config, DockgeSocket } from "./util-server";
+import {
+    AgentServiceTokenConfig,
+    isAllowedAgentOnlyEvent,
+    isConfiguredAgentServiceTokenEndpoint,
+    parseAgentServiceTokenPolicy,
+    verifyAgentServiceToken,
+} from "./agent-service-token";
 import { DockerSocketHandler } from "./agent-socket-handlers/docker-socket-handler";
 import expressStaticGzip from "express-static-gzip";
 import path from "path";
@@ -90,6 +97,9 @@ export class DockgeServer {
     needSetup = false;
 
     jwtSecret : string = "";
+
+    agentServiceTokenConfig?: AgentServiceTokenConfig;
+    agentOnly = false;
 
     stacksDir : string = "";
 
@@ -169,6 +179,22 @@ export class DockgeServer {
         this.config.stacksDir = args.stacksDir || process.env.DOCKGE_STACKS_DIR || defaultStacksDir;
         this.config.enableConsole = args.enableConsole || process.env.DOCKGE_ENABLE_CONSOLE === "true" || false;
         this.stacksDir = this.config.stacksDir;
+
+        const agentServiceTokenPolicy = parseAgentServiceTokenPolicy();
+        this.agentOnly = agentServiceTokenPolicy.agentOnly;
+        this.agentServiceTokenConfig = agentServiceTokenPolicy.config;
+        if (this.agentOnly && this.config.enableConsole) {
+            throw new Error("DOCKGE_AGENT_ONLY=true requires DOCKGE_ENABLE_CONSOLE=false.");
+        }
+        if (process.env.DOCKGE_AGENT_ENDPOINT_ID || process.env.DOCKGE_AGENT_TOKEN_SHA256) {
+            if (this.agentOnly && this.agentServiceTokenConfig) {
+                log.info("auth", "Agent service-token authentication enabled for endpoint " + this.agentServiceTokenConfig.endpoint);
+            } else if (this.agentServiceTokenConfig) {
+                log.warn("auth", "Agent service-token configuration is ignored unless DOCKGE_AGENT_ONLY=true");
+            } else {
+                log.error("auth", "Agent service-token authentication is disabled because its endpoint ID or SHA-256 digest is invalid or incomplete");
+            }
+        }
 
         const containerEngineConfig = parseContainerEngineConfig();
         this.containerEngine = createContainerEngine(containerEngineConfig);
@@ -292,9 +318,25 @@ export class DockgeServer {
                 log.info("server", "Socket connected (direct)");
             }
 
+            if (this.agentOnly && !this.isConfiguredAgentServiceTokenEndpoint(dockgeSocket)) {
+                log.warn("auth", "Rejected socket without the configured agent endpoint header");
+                dockgeSocket.disconnect(true);
+                return;
+            }
+
+            if (this.agentOnly) {
+                dockgeSocket.use((event, next) => {
+                    if (!isAllowedAgentOnlyEvent(event[0])) {
+                        next(new Error("This endpoint accepts only agent service-token requests."));
+                        return;
+                    }
+                    next();
+                });
+            }
+
             this.sendInfo(dockgeSocket, true);
 
-            if (this.needSetup) {
+            if (this.needSetup && !this.agentOnly) {
                 log.info("server", "Redirect to setup page");
                 dockgeSocket.emit("setup");
             }
@@ -320,7 +362,7 @@ export class DockgeServer {
             // ***************************
 
             log.debug("auth", "check auto login");
-            if (await Settings.get("disableAuth")) {
+            if (await Settings.get("disableAuth") && !this.agentOnly && !this.isConfiguredAgentServiceTokenEndpoint(dockgeSocket)) {
                 log.info("auth", "Disabled Auth: auto login to admin");
                 this.afterLogin(dockgeSocket, await R.findOne("user") as User);
                 dockgeSocket.emit("autoLogin");
@@ -363,6 +405,21 @@ export class DockgeServer {
 
         // Also connect to other dockge instances
         socket.instanceManager.connectAll();
+    }
+
+    isConfiguredAgentServiceTokenEndpoint(socket: DockgeSocket) {
+        return isConfiguredAgentServiceTokenEndpoint(this.agentServiceTokenConfig, socket.endpoint);
+    }
+
+    authorizeAgentServiceToken(socket: DockgeSocket, token: unknown) {
+        if (!verifyAgentServiceToken(this.agentServiceTokenConfig, socket.endpoint, token)) {
+            return false;
+        }
+
+        // This capability is deliberately not a user login. AgentProxy is the
+        // only handler which recognizes agentEndpoint.
+        socket.agentEndpoint = this.agentServiceTokenConfig?.endpoint;
+        return true;
     }
 
     /**
@@ -624,7 +681,7 @@ export class DockgeServer {
             let dockgeSocket = socket as DockgeSocket;
 
             // Check if the room is a number (user id)
-            if (dockgeSocket.userID) {
+            if (dockgeSocket.userID || dockgeSocket.agentEndpoint) {
 
                 // Get the list only if there is a logged in user
                 if (!stackList) {

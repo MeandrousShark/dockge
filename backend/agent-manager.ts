@@ -7,6 +7,17 @@ import semver from "semver";
 import { R } from "redbean-node";
 import dayjs, { Dayjs } from "dayjs";
 
+export type AgentCredentials =
+    | {
+        authMode: "password";
+        username: string;
+        password: string;
+    }
+    | {
+        authMode: "token";
+        token: string;
+    };
+
 /**
  * Dockge Instance Manager
  * One AgentManager per Socket connection
@@ -26,7 +37,7 @@ export class AgentManager {
         return this._firstConnectTime;
     }
 
-    test(url : string, username : string, password : string) : Promise<void> {
+    test(url : string, credentials: AgentCredentials) : Promise<void> {
         return new Promise((resolve, reject) => {
             let obj = new URL(url);
             let endpoint = obj.host;
@@ -47,10 +58,7 @@ export class AgentManager {
             });
 
             client.on("connect", () => {
-                client.emit("login", {
-                    username: username,
-                    password: password,
-                }, (res : LooseObject) => {
+                client.emit("login", this.loginPayload(credentials), (res : LooseObject) => {
                     if (res.ok) {
                         resolve();
                     } else {
@@ -78,11 +86,13 @@ export class AgentManager {
      * @param password
      * @param name
      */
-    async add(url: string, username: string, password: string, name: string): Promise<Agent> {
+    async add(url: string, credentials: AgentCredentials, name: string): Promise<Agent> {
         let bean = R.dispense("agent") as Agent;
         bean.url = url;
-        bean.username = username;
-        bean.password = password;
+        bean.auth_mode = credentials.authMode;
+        bean.username = credentials.authMode === "password" ? credentials.username : "";
+        bean.password = credentials.authMode === "password" ? credentials.password : "";
+        bean.token = credentials.authMode === "token" ? credentials.token : null;
         bean.name = name;
         await R.store(bean);
         return bean;
@@ -125,7 +135,7 @@ export class AgentManager {
         }
     }
 
-    connect(url : string, username : string, password : string) {
+    connect(url : string, credentials: AgentCredentials) {
         let obj = new URL(url);
         let endpoint = obj.host;
 
@@ -154,10 +164,7 @@ export class AgentManager {
         client.on("connect", () => {
             log.info("agent-manager", "Connected to the socket server: " + endpoint);
 
-            client.emit("login", {
-                username: username,
-                password: password,
-            }, (res : LooseObject) => {
+            client.emit("login", this.loginPayload(credentials), (res : LooseObject) => {
                 if (res.ok) {
                     log.info("agent-manager", "Logged in to the socket server: " + endpoint);
                     this.agentLoggedInList[endpoint] = true;
@@ -234,7 +241,7 @@ export class AgentManager {
 
         for (let endpoint in list) {
             let agent = list[endpoint];
-            this.connect(agent.url, agent.username, agent.password);
+            this.connect(agent.url, agent.credentials);
         }
     }
 
@@ -310,5 +317,20 @@ export class AgentManager {
             ok: true,
             agentList: result,
         });
+    }
+
+    private loginPayload(credentials: AgentCredentials) {
+        if (credentials.authMode === "token") {
+            return {
+                authMode: "token",
+                token: credentials.token,
+            };
+        }
+
+        return {
+            authMode: "password",
+            username: credentials.username,
+            password: credentials.password,
+        };
     }
 }

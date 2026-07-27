@@ -84,13 +84,34 @@
                             </div>
 
                             <div class="mb-3">
-                                <label for="username" class="form-label">{{ $t("Username") }}</label>
-                                <input id="username" v-model="agent.username" type="text" class="form-control" required>
+                                <label class="form-label">{{ $t("Authentication Type") }}</label>
+
+                                <div class="form-check">
+                                    <input id="agent-auth-password" v-model="agent.authMode" class="form-check-input" type="radio" value="password" @change="onAgentAuthModeChange">
+                                    <label class="form-check-label" for="agent-auth-password">{{ $t("Username and Password") }}</label>
+                                </div>
+
+                                <div class="form-check">
+                                    <input id="agent-auth-token" v-model="agent.authMode" class="form-check-input" type="radio" value="token" @change="onAgentAuthModeChange">
+                                    <label class="form-check-label" for="agent-auth-token">{{ $t("Service Token") }}</label>
+                                </div>
                             </div>
 
-                            <div class="mb-3">
-                                <label for="password" class="form-label">{{ $t("Password") }}</label>
-                                <input id="password" v-model="agent.password" type="password" class="form-control" required autocomplete="new-password">
+                            <template v-if="agent.authMode === 'password'">
+                                <div class="mb-3">
+                                    <label for="username" class="form-label">{{ $t("Username") }}</label>
+                                    <input id="username" v-model="agent.username" type="text" class="form-control" required>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label for="password" class="form-label">{{ $t("Password") }}</label>
+                                    <input id="password" v-model="agent.password" type="password" class="form-control" required autocomplete="new-password">
+                                </div>
+                            </template>
+
+                            <div v-else class="mb-3">
+                                <label for="agent-token" class="form-label">{{ $t("Service Token") }}</label>
+                                <input id="agent-token" v-model="agent.token" type="password" class="form-control" required autocomplete="off">
                             </div>
 
                             <div class="mb-3">
@@ -113,6 +134,18 @@
 
 <script>
 import { statusNameShort } from "../../../common/util-common";
+
+function newAgent() {
+    return {
+        url: "http://",
+        authMode: "password",
+        username: "",
+        password: "",
+        token: "",
+        name: "",
+        updatedName: "",
+    };
+}
 
 export default {
     components: {
@@ -140,13 +173,7 @@ export default {
             showRemoveAgentDialog: {},
             showEditAgentNameDialog: {},
             connectingAgent: false,
-            agent: {
-                url: "http://",
-                username: "",
-                password: "",
-                name: "",
-                updatedName: "",
-            }
+            agent: newAgent(),
         };
     },
 
@@ -189,20 +216,38 @@ export default {
 
         addAgent() {
             this.connectingAgent = true;
-            this.$root.getSocket().emit("addAgent", this.agent, (res) => {
+            let agent = {
+                url: this.agent.url,
+                authMode: this.agent.authMode,
+                name: this.agent.name,
+            };
+
+            if (this.agent.authMode === "token") {
+                agent.token = this.agent.token;
+            } else {
+                agent.username = this.agent.username;
+                agent.password = this.agent.password;
+            }
+
+            this.$root.getSocket().emit("addAgent", agent, (res) => {
                 this.$root.toastRes(res);
 
                 if (res.ok) {
                     this.showAgentForm = false;
-                    this.agent = {
-                        url: "http://",
-                        username: "",
-                        password: "",
-                    };
+                    this.agent = newAgent();
                 }
 
                 this.connectingAgent = false;
             });
+        },
+
+        onAgentAuthModeChange() {
+            if (this.agent.authMode === "token") {
+                this.agent.username = "";
+                this.agent.password = "";
+            } else {
+                this.agent.token = "";
+            }
         },
 
         removeAgent(url) {
