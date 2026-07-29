@@ -91,7 +91,9 @@ test("command runner merges command environment additions for an external provid
     });
 
     assert.equal(fixture.calls[0].options.env?.CONTAINER_HOST, "unix:///run/podman/podman.sock");
-    assert.equal(fixture.calls[0].options.env?.PATH, process.env.PATH);
+    const inheritedEntry = Object.entries(process.env).find((entry) => entry[1] !== undefined);
+    assert.ok(inheritedEntry);
+    assert.equal(fixture.calls[0].options.env?.[inheritedEntry[0]], inheritedEntry[1]);
 });
 
 test("command runner converts a thrown spawn failure to a nonzero result", async () => {
