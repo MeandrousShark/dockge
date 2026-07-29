@@ -104,6 +104,14 @@ export class PodmanEngine implements ContainerEngine {
         return this.build([ "ps", "-a", "--filter", `label=com.docker.compose.project=${projectName}`, "--format", "json" ]);
     }
 
+    /**
+     * Follow one container at a time. Remote Podman rejects multi-container
+     * log requests, so Stack fans these commands out for combined logs.
+     */
+    containerLogs(containerId: string): EngineCommand {
+        return this.build([ "logs", "-f", "--tail", "100", containerId ]);
+    }
+
     networkList(): EngineCommand {
         return this.build([ "network", "ls", "--format", "{{.Name}}" ]);
     }

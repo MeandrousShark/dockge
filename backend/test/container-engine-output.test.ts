@@ -6,6 +6,7 @@ import {
     parseContainerPsOutput,
     parseNetworkListOutput,
     parsePodmanComposeListOutput,
+    parsePodmanLogContainers,
     parseStatsOutput,
 } from "../container-engine/output-parser";
 
@@ -68,6 +69,75 @@ test("Podman container inventory ignores malformed labels, states, and stack nam
     assert.deepEqual(parsePodmanComposeListOutput(output), [
         { Name: "good",
             Status: "paused(1)" },
+    ]);
+});
+
+test("Podman log inventory selects stack containers in deterministic service order", () => {
+    const output = JSON.stringify([
+        { Id: "worker-id",
+            State: "exited",
+            Names: [ "demo-worker-1" ],
+            Labels: {
+                "com.docker.compose.project": "demo",
+                "com.docker.compose.service": "worker",
+            } },
+        { Id: "api-id",
+            State: "running",
+            Names: [ "demo-api-1" ],
+            Labels: {
+                "com.docker.compose.project": "demo",
+                "com.docker.compose.service": "api",
+            } },
+        { Id: "infra-id",
+            IsInfra: true,
+            Names: [ "infra" ],
+            Labels: {
+                "com.docker.compose.project": "demo",
+                "com.docker.compose.service": "api",
+            } },
+        { Id: "other-stack-id",
+            Names: [ "other-api-1" ],
+            Labels: {
+                "com.docker.compose.project": "other",
+                "com.docker.compose.service": "api",
+            } },
+        { Id: 1,
+            Names: [ "demo-missing-id-1" ],
+            Labels: {
+                "com.docker.compose.project": "demo",
+                "com.docker.compose.service": "missing-id",
+            } },
+        { Id: "--not-a-container-id",
+            Names: [ "demo-unsafe-id-1" ],
+            Labels: {
+                "com.docker.compose.project": "demo",
+                "com.docker.compose.service": "unsafe-id",
+            } },
+    ]);
+
+    assert.deepEqual(parsePodmanLogContainers(output, "demo"), [
+        { id: "api-id",
+            service: "api",
+            name: "demo-api-1" },
+        { id: "worker-id",
+            service: "worker",
+            name: "demo-worker-1" },
+    ]);
+});
+
+test("Podman log inventory retains containers without optional labels or array names", () => {
+    const output = JSON.stringify([
+        { ID: "named-id",
+            Names: "demo-named-1",
+            Labels: { "com.docker.compose.project": "demo" } },
+        { Id: "unnamed-id",
+            Labels: { "com.docker.compose.project": "demo" } },
+    ]);
+
+    assert.deepEqual(parsePodmanLogContainers(output, "demo"), [
+        { id: "named-id",
+            name: "demo-named-1" },
+        { id: "unnamed-id" },
     ]);
 });
 

@@ -191,6 +191,25 @@ test("Podman builds the same normalized operations with Podman's remote socket f
     assert.ok(Object.isFrozen(engine.stats().args));
 });
 
+test("Podman builds one remote direct log command for each container", () => {
+    const engine = createContainerEngine(parseContainerEngineConfig({
+        DOCKGE_CONTAINER_ENGINE: "podman",
+        DOCKGE_CONTAINER_ENGINE_SOCKET: "unix:///run/podman/podman.sock",
+    }));
+
+    const command = engine.containerLogs("8c4d4f3e2a1b");
+
+    assert.equal(command.env, undefined);
+    assert.deepEqual(command, {
+        file: "podman",
+        args: [
+            "--url", "unix:///run/podman/podman.sock",
+            "logs", "-f", "--tail", "100", "8c4d4f3e2a1b",
+        ],
+    });
+    assert.ok(Object.isFrozen(command.args));
+});
+
 test("Podman preserves Docker Compose environment precedence with its single-file provider", () => {
     const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "dockge-podman-env-"));
     const stackDir = path.join(workspace, "stack");

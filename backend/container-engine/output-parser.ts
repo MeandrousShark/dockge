@@ -29,6 +29,13 @@ export interface ContainerPsOutput {
     Names?: string;
 }
 
+/** A project container eligible for one direct Podman log follower. */
+export interface PodmanLogContainer {
+    readonly id: string;
+    readonly service?: string;
+    readonly name?: string;
+}
+
 /** The non-sensitive Docker-compatible stats fields rendered by the UI. */
 export interface ContainerStatsOutput {
     Container?: string;
@@ -51,6 +58,11 @@ function isRecord(value: unknown): value is JsonRecord {
 function stringField(record: JsonRecord, field: string): string | undefined {
     const value = record[field];
     return typeof value === "string" ? value : undefined;
+}
+
+/** Container IDs become direct argv values, so retain only conventional IDs. */
+function isSafeContainerId(value: string | undefined): value is string {
+    return value !== undefined && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value);
 }
 
 /**
@@ -247,6 +259,44 @@ export function parseContainerPsOutput(stdout: string): ContainerPsOutput[] {
             }
         }
         return [ output ];
+    });
+}
+
+/**
+ * Extract a stable, direct-container inventory for Podman's remote log
+ * fan-out. The project check remains deliberate even though the command uses
+ * a label filter: command output is untrusted and must not broaden scope.
+ */
+export function parsePodmanLogContainers(stdout: string, projectName: string): PodmanLogContainer[] {
+    const containers = new Map<string, PodmanLogContainer>();
+
+    for (const record of parseJsonRecords(stdout)) {
+        if (record.IsInfra === true) {
+            continue;
+        }
+
+        const id = stringField(record, "Id") ?? stringField(record, "ID");
+        const labels = record.Labels;
+        if (!isSafeContainerId(id) || !isRecord(labels) || labels["com.docker.compose.project"] !== projectName) {
+            continue;
+        }
+
+        const service = stringField(labels, "com.docker.compose.service");
+        const names = record.Names;
+        const name = Array.isArray(names)
+            ? names.find((value): value is string => typeof value === "string" && value !== "")
+            : typeof names === "string" && names !== "" ? names : undefined;
+        containers.set(id, {
+            id,
+            ...(service === undefined ? {} : { service }),
+            ...(name === undefined ? {} : { name }),
+        });
+    }
+
+    return [ ...containers.values() ].sort((left, right) => {
+        const leftLabel = `${left.service ?? ""}\u0000${left.name ?? ""}\u0000${left.id}`;
+        const rightLabel = `${right.service ?? ""}\u0000${right.name ?? ""}\u0000${right.id}`;
+        return leftLabel.localeCompare(rightLabel);
     });
 }
 

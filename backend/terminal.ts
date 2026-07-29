@@ -1,6 +1,8 @@
 import { DockgeServer } from "./dockge-server";
 import * as os from "node:os";
-import * as pty from "@homebridge/node-pty-prebuilt-multiarch";
+import { createRequire } from "node:module";
+import type * as pty from "@homebridge/node-pty-prebuilt-multiarch";
+import { spawn } from "node:child_process";
 import { LimitQueue } from "./utils/limit-queue";
 import { DockgeSocket } from "./util-server";
 import {
@@ -10,6 +12,17 @@ import {
 } from "../common/util-common";
 import { sync as commandExistsSync } from "command-exists";
 import { log } from "./log";
+import { commandEnvironment } from "./container-engine/container-engine";
+import type { EngineCommand } from "./container-engine/types";
+import type { PodmanLogContainer } from "./container-engine/output-parser";
+
+const require = createRequire(import.meta.url);
+let ptyModule : typeof pty | undefined;
+
+function loadPty() : typeof pty {
+    ptyModule ??= require("@homebridge/node-pty-prebuilt-multiarch") as typeof pty;
+    return ptyModule;
+}
 
 /**
  * Terminal for running commands, no user interaction
@@ -37,6 +50,7 @@ export class Terminal {
     protected kickDisconnectedClientsInterval? : NodeJS.Timeout;
 
     protected socketList : Record<string, DockgeSocket> = {};
+    private hasExited : boolean = false;
 
     constructor(server : DockgeServer, name : string, file : string, args : string | string[], cwd : string, envDefaults?: Readonly<Record<string, string>>, env?: Readonly<Record<string, string>>) {
         this.server = server;
@@ -116,7 +130,7 @@ export class Terminal {
         }
 
         try {
-            this._ptyProcess = pty.spawn(this.file, this.args, {
+            this._ptyProcess = loadPty().spawn(this.file, this.args, {
                 name: this.name,
                 cwd: this.cwd,
                 cols: TERMINAL_COLS,
@@ -131,14 +145,7 @@ export class Terminal {
             });
 
             // On Data
-            this._ptyProcess.onData((data) => {
-                this.buffer.pushItem(data);
-
-                for (const socketID in this.socketList) {
-                    const socket = this.socketList[socketID];
-                    socket.emitAgent("terminalWrite", this.name, data);
-                }
-            });
+            this._ptyProcess.onData(this.writeData);
 
             // On Exit
             this._ptyProcess.onExit(this.exit);
@@ -155,11 +162,26 @@ export class Terminal {
         }
     }
 
+    /** Add bounded output and broadcast it to every current terminal client. */
+    protected writeData = (data: string) => {
+        this.buffer.pushItem(data);
+
+        for (const socketID in this.socketList) {
+            const socket = this.socketList[socketID];
+            socket.emitAgent("terminalWrite", this.name, data);
+        }
+    };
+
     /**
      * Exit event handler
      * @param res
      */
     protected exit = (res : {exitCode: number, signal?: number | undefined}) => {
+        if (this.hasExited) {
+            return;
+        }
+        this.hasExited = true;
+
         for (const socketID in this.socketList) {
             const socket = this.socketList[socketID];
             socket.emitAgent("terminalExit", this.name, res.exitCode);
@@ -256,6 +278,194 @@ export class Terminal {
 
     public static getTerminalCount() {
         return Terminal.terminalMap.size;
+    }
+}
+
+export interface PodmanLogFollower {
+    readonly container: PodmanLogContainer;
+    readonly command: EngineCommand;
+}
+
+export interface PodmanLogChild {
+    readonly stdout?: PodmanLogStream;
+    readonly stderr?: PodmanLogStream;
+    kill(signal?: NodeJS.Signals | number): boolean;
+    once(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
+    once(event: "error", listener: (error: Error) => void): this;
+}
+
+export interface PodmanLogStream {
+    on(event: "data", listener: (data: Buffer | string) => void): unknown;
+}
+
+export type PodmanLogSpawner = (
+    file: string,
+    args: readonly string[],
+    options: { cwd: string; env?: NodeJS.ProcessEnv },
+) => PodmanLogChild;
+
+const defaultPodmanLogSpawner: PodmanLogSpawner = (file, args, options) => {
+    return spawn(file, [ ...args ], {
+        cwd: options.cwd,
+        ...(options.env === undefined ? {} : { env: options.env }),
+        shell: false,
+        stdio: [ "ignore", "pipe", "pipe" ],
+    });
+};
+
+/** A readable source label that distinguishes scaled-service followers. */
+export function describePodmanLogSource(container: PodmanLogContainer): string {
+    if (container.service && container.name) {
+        return `${container.service}/${container.name}`;
+    }
+    return container.service ?? container.name ?? container.id.slice(0, 12);
+}
+
+/**
+ * Merge one remote-Podman log follower per project container into Dockge's
+ * existing terminal socket and bounded buffer. `podman logs` accepts one
+ * remote container at a time, unlike podman-compose's multi-container path.
+ */
+export class PodmanCombinedLogsTerminal extends Terminal {
+    private readonly followers: readonly PodmanLogFollower[];
+    private readonly spawner: PodmanLogSpawner;
+    private readonly children = new Set<PodmanLogChild>();
+    private started : boolean = false;
+    private stopping : boolean = false;
+    private pendingFollowers : number = 0;
+    private exitCode : number = 0;
+
+    constructor(
+        server: DockgeServer,
+        name: string,
+        cwd: string,
+        followers: readonly PodmanLogFollower[],
+        spawner: PodmanLogSpawner = defaultPodmanLogSpawner,
+    ) {
+        super(server, name, "", [], cwd);
+        this.followers = followers;
+        this.spawner = spawner;
+    }
+
+    public override start() {
+        if (this.started) {
+            return;
+        }
+        this.started = true;
+        this.startMaintenance();
+
+        if (this.followers.length === 0) {
+            this.writeData("No containers found for this Compose project.\r\n");
+            this.exit({ exitCode: 0 });
+            return;
+        }
+
+        this.pendingFollowers = this.followers.length;
+        for (const follower of this.followers) {
+            this.startFollower(follower);
+        }
+    }
+
+    public override close() {
+        if (this.stopping) {
+            return;
+        }
+        this.stopping = true;
+        clearInterval(this.keepAliveInterval);
+
+        for (const child of this.children) {
+            child.kill("SIGTERM");
+        }
+        this.finishIfDone();
+    }
+
+    private startMaintenance() {
+        this.kickDisconnectedClientsInterval = setInterval(() => {
+            for (const socketID in this.socketList) {
+                const socket = this.socketList[socketID];
+                if (!socket.connected) {
+                    log.debug("Terminal", "Kicking disconnected client " + socket.id + " from terminal " + this.name);
+                    this.leave(socket);
+                }
+            }
+        }, 60 * 1000);
+
+        if (this.enableKeepAlive) {
+            this.keepAliveInterval = setInterval(() => {
+                if (Object.keys(this.socketList).length === 0) {
+                    log.debug("Terminal", "Terminal " + this.name + " has no client, closing...");
+                    this.close();
+                }
+            }, 60 * 1000);
+        }
+    }
+
+    private startFollower(follower: PodmanLogFollower) {
+        const write = this.createPrefixedWriter(describePodmanLogSource(follower.container));
+        let settled = false;
+        let child : PodmanLogChild | undefined;
+        const settle = (code: number | null) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            if (child) {
+                this.children.delete(child);
+            }
+            if (!this.stopping && code !== null && code !== 0 && this.exitCode === 0) {
+                this.exitCode = code;
+            }
+            this.pendingFollowers--;
+            this.finishIfDone();
+        };
+
+        try {
+            const env = commandEnvironment(follower.command);
+            child = this.spawner(follower.command.file, follower.command.args, {
+                cwd: this.cwd,
+                ...(env === undefined ? {} : { env }),
+            });
+            this.children.add(child);
+            child.stdout?.on("data", (data: Buffer | string) => write(data.toString()));
+            child.stderr?.on("data", (data: Buffer | string) => write(data.toString()));
+            child.once("error", () => {
+                write("Log follower failed to start.\r\n");
+                settle(1);
+            });
+            child.once("close", (code) => settle(code));
+        } catch (error) {
+            log.error("PodmanCombinedLogsTerminal", error);
+            write("Log follower failed to start.\r\n");
+            settle(1);
+        }
+    }
+
+    private createPrefixedWriter(source: string): (data: string) => void {
+        const prefix = `${source} | `;
+        let atLineStart = true;
+
+        return (data: string) => {
+            let formatted = "";
+            for (const line of data.split(/(?<=\n)/)) {
+                if (!line) {
+                    continue;
+                }
+                if (atLineStart) {
+                    formatted += prefix;
+                }
+                formatted += line;
+                atLineStart = line.endsWith("\n");
+            }
+            if (formatted) {
+                this.writeData(formatted);
+            }
+        };
+    }
+
+    private finishIfDone() {
+        if (this.pendingFollowers === 0) {
+            this.exit({ exitCode: this.stopping ? 0 : this.exitCode });
+        }
     }
 }
 

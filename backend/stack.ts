@@ -17,7 +17,8 @@ import {
     RUNNING, TERMINAL_ROWS,
     UNKNOWN
 } from "../common/util-common";
-import { InteractiveTerminal, Terminal } from "./terminal";
+import { InteractiveTerminal, PodmanCombinedLogsTerminal, Terminal } from "./terminal";
+import type { PodmanLogFollower } from "./terminal";
 import childProcessAsync from "promisify-child-process";
 import { Settings } from "./settings";
 import { getStackComposeOptions } from "./stack-compose-operations";
@@ -36,6 +37,7 @@ import {
     parseComposeListOutput,
     parseComposePsOutput,
     parseContainerPsOutput,
+    parsePodmanLogContainers,
     parsePodmanComposeListOutput,
 } from "./container-engine/output-parser";
 
@@ -656,13 +658,46 @@ export class Stack {
 
     async joinCombinedTerminal(socket: DockgeSocket) {
         const terminalName = getCombinedTerminalName(socket.endpoint, this.name);
-        const command = this.getComposeCommandFor("combined-logs");
-        const terminal = Terminal.getOrCreateTerminal(this.server, terminalName, command.file, [ ...command.args ], this.path, command.envDefaults, command.env);
+        let terminal = Terminal.getTerminal(terminalName);
+
+        if (!terminal && this.server.containerEngine.kind === "podman") {
+            const followers = await this.getPodmanLogFollowers();
+            // A second client can arrive while the inventory command is in
+            // flight. Reuse the terminal it created rather than duplicating
+            // follower processes.
+            terminal = Terminal.getTerminal(terminalName) ?? new PodmanCombinedLogsTerminal(this.server, terminalName, this.path, followers);
+        }
+
+        if (!terminal) {
+            // Keep Docker's Compose `logs -f --tail 100` path unchanged.
+            const command = this.getComposeCommandFor("combined-logs");
+            terminal = Terminal.getOrCreateTerminal(this.server, terminalName, command.file, [ ...command.args ], this.path, command.envDefaults, command.env);
+        }
         terminal.enableKeepAlive = true;
         terminal.rows = COMBINED_TERMINAL_ROWS;
         terminal.cols = COMBINED_TERMINAL_COLS;
         terminal.join(socket);
         terminal.start();
+    }
+
+    private async getPodmanLogFollowers() : Promise<PodmanLogFollower[]> {
+        try {
+            const command = this.server.containerEngine.containerStatus(this.name);
+            const result = await childProcessAsync.spawn(command.file, [ ...command.args ], {
+                cwd: this.path,
+                encoding: "utf-8",
+                ...engineSpawnOptions(command),
+            });
+            const stdout = result.stdout?.toString() ?? "";
+            return parsePodmanLogContainers(stdout, this.name).map((container) => ({
+                container,
+                command: this.server.containerEngine.containerLogs(container.id),
+            }));
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "unknown error";
+            log.warn("joinCombinedTerminal", `Failed to list Podman log containers: ${message}`);
+            return [];
+        }
     }
 
     async leaveCombinedTerminal(socket: DockgeSocket) {

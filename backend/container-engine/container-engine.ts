@@ -39,6 +39,7 @@ export interface ContainerEngine {
     composeCommand(args: readonly string[], workingDirectory?: string): EngineCommand;
     composeList(): EngineCommand;
     containerStatus(projectName: string): EngineCommand;
+    containerLogs(containerId: string): EngineCommand;
     networkList(): EngineCommand;
     stats(): EngineCommand;
 }

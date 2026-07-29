@@ -37,6 +37,10 @@ export class DockerEngine implements ContainerEngine {
         return this.build([ "ps", "-a", "--filter", `label=com.docker.compose.project=${projectName}`, "--format", "json" ]);
     }
 
+    containerLogs(containerId: string): EngineCommand {
+        return this.build([ "logs", "-f", "--tail", "100", containerId ]);
+    }
+
     networkList(): EngineCommand {
         return this.build([ "network", "ls", "--format", "{{.Name}}" ]);
     }
