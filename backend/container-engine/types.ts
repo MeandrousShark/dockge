@@ -25,6 +25,11 @@ export interface ContainerEngineConfig {
 export interface EngineCommand {
     readonly file: string;
     readonly args: readonly string[];
+    /**
+     * Environment additions required by the selected command. Values here are
+     * merged with the process environment immediately before spawning.
+     */
+    readonly env?: Readonly<Record<string, string>>;
 }
 
 /** Facts observed from the selected engine during startup probing. */

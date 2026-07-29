@@ -1,4 +1,5 @@
 import childProcessAsync from "promisify-child-process";
+import { commandEnvironment } from "./container-engine";
 import type { EngineCommand, EngineCommandResult, EngineCommandRunner } from "./types";
 
 /** A fixed upper bound prevents startup version probes from blocking indefinitely. */
@@ -14,7 +15,7 @@ export interface SpawnedCommandResult {
 export type CommandSpawner = (
     file: string,
     args: readonly string[],
-    options: { encoding: "utf-8"; timeout: number },
+    options: { encoding: "utf-8"; timeout: number; env?: NodeJS.ProcessEnv },
 ) => Promise<SpawnedCommandResult>;
 
 export interface SpawnCommandRunnerOptions {
@@ -46,9 +47,11 @@ export class SpawnCommandRunner implements EngineCommandRunner {
 
     async run(command: EngineCommand): Promise<EngineCommandResult> {
         try {
+            const env = commandEnvironment(command);
             const result = await this.spawn(command.file, command.args, {
                 encoding: "utf-8",
                 timeout: this.timeoutMs,
+                ...(env === undefined ? {} : { env }),
             });
             return resultFromProcess(result);
         } catch (error) {

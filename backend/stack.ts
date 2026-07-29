@@ -22,6 +22,8 @@ import childProcessAsync from "promisify-child-process";
 import { Settings } from "./settings";
 import { getStackComposeOptions } from "./stack-compose-operations";
 import type { StackComposeOperation } from "./stack-compose-operations";
+import { commandEnvironment } from "./container-engine/container-engine";
+import type { EngineCommand } from "./container-engine/types";
 import {
     resolveStackPath,
     validateExistingStackPath,
@@ -36,6 +38,11 @@ import {
     parseContainerPsOutput,
     parsePodmanComposeListOutput,
 } from "./container-engine/output-parser";
+
+function engineSpawnOptions(command: EngineCommand): { env?: NodeJS.ProcessEnv } {
+    const env = commandEnvironment(command);
+    return env === undefined ? {} : { env };
+}
 
 // For getSingleComposeStatus and general compose stack objects
 export interface ComposeStack {
@@ -143,6 +150,7 @@ export class Stack {
         let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
             cwd: this.path,
             encoding: "utf-8",
+            ...engineSpawnOptions(command),
         });
         if (!res.stdout) {
             return {};
@@ -293,7 +301,7 @@ export class Stack {
     async deploy(socket : DockgeSocket) : Promise<number> {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("deploy");
-        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error("Failed to deploy, please check the terminal output for more information.");
         }
@@ -303,7 +311,7 @@ export class Stack {
     async delete(socket: DockgeSocket, options: DeleteOptions) : Promise<number> {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("delete");
-        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error(`Failed to delete ${this.name}, please check the terminal output for more information.`);
         }
@@ -322,7 +330,7 @@ export class Stack {
     async forceDelete(socket: DockgeSocket): Promise<number> {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("force-delete");
-        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
 
         // Remove the stack folder
         await fsAsync.rm(this.path, {
@@ -450,6 +458,7 @@ export class Stack {
             const command = server.containerEngine.composeList();
             const res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
                 encoding: "utf-8",
+                ...engineSpawnOptions(command),
             });
 
             if (!res.stdout) {
@@ -475,6 +484,7 @@ export class Stack {
         const command = server.containerEngine.containerStatus(composeName);
         let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
             encoding: "utf-8",
+            ...engineSpawnOptions(command),
         });
 
         if (!res.stdout) {
@@ -583,7 +593,7 @@ export class Stack {
     async start(socket: DockgeSocket) {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("start");
-        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error("Failed to start, please check the terminal output for more information.");
         }
@@ -593,7 +603,7 @@ export class Stack {
     async stop(socket: DockgeSocket) : Promise<number> {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("stop");
-        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error("Failed to stop, please check the terminal output for more information.");
         }
@@ -603,7 +613,7 @@ export class Stack {
     async restart(socket: DockgeSocket) : Promise<number> {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("restart");
-        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error("Failed to restart, please check the terminal output for more information.");
         }
@@ -613,7 +623,7 @@ export class Stack {
     async down(socket: DockgeSocket) : Promise<number> {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("down");
-        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error("Failed to down, please check the terminal output for more information.");
         }
@@ -623,7 +633,7 @@ export class Stack {
     async update(socket: DockgeSocket) {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         let command = this.getComposeCommandFor("update-pull");
-        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        let exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error("Failed to pull, please check the terminal output for more information.");
         }
@@ -636,7 +646,7 @@ export class Stack {
         }
 
         command = this.getComposeCommandFor("update-redeploy");
-        exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error("Failed to restart, please check the terminal output for more information.");
         }
@@ -647,7 +657,7 @@ export class Stack {
     async joinCombinedTerminal(socket: DockgeSocket) {
         const terminalName = getCombinedTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("combined-logs");
-        const terminal = Terminal.getOrCreateTerminal(this.server, terminalName, command.file, [ ...command.args ], this.path);
+        const terminal = Terminal.getOrCreateTerminal(this.server, terminalName, command.file, [ ...command.args ], this.path, command.env);
         terminal.enableKeepAlive = true;
         terminal.rows = COMBINED_TERMINAL_ROWS;
         terminal.cols = COMBINED_TERMINAL_COLS;
@@ -669,7 +679,7 @@ export class Stack {
 
         if (!terminal) {
             const command = this.getComposeCommandFor("container-exec", serviceName, shell);
-            terminal = new InteractiveTerminal(this.server, terminalName, command.file, [ ...command.args ], this.path);
+            terminal = new InteractiveTerminal(this.server, terminalName, command.file, [ ...command.args ], this.path, command.env);
             terminal.rows = TERMINAL_ROWS;
             log.debug("joinContainerTerminal", "Terminal created");
         }
@@ -686,6 +696,7 @@ export class Stack {
             let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
                 cwd: this.path,
                 encoding: "utf-8",
+                ...engineSpawnOptions(command),
             });
 
             if (!res.stdout) {
@@ -716,7 +727,7 @@ export class Stack {
     async startService(socket: DockgeSocket, serviceName: string) {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("start-service", serviceName);
-        const exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        const exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error(`Failed to start service ${serviceName}, please check logs for more information.`);
         }
@@ -727,7 +738,7 @@ export class Stack {
     async stopService(socket: DockgeSocket, serviceName: string): Promise<number> {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("stop-service", serviceName);
-        const exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        const exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error(`Failed to stop service ${serviceName}, please check logs for more information.`);
         }
@@ -738,7 +749,7 @@ export class Stack {
     async restartService(socket: DockgeSocket, serviceName: string): Promise<number> {
         const terminalName = getComposeTerminalName(socket.endpoint, this.name);
         const command = this.getComposeCommandFor("restart-service", serviceName);
-        const exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path);
+        const exitCode = await Terminal.exec(this.server, socket, terminalName, command.file, [ ...command.args ], this.path, command.env);
         if (exitCode !== 0) {
             throw new Error(`Failed to restart service ${serviceName}, please check logs for more information.`);
         }

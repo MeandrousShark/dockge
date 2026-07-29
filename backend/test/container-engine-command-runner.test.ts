@@ -14,7 +14,7 @@ const command = {
 interface SpawnCall {
     file: string;
     args: readonly string[];
-    options: { encoding: "utf-8"; timeout: number };
+    options: { encoding: "utf-8"; timeout: number; env?: NodeJS.ProcessEnv };
 }
 
 function createSpawner(outcome: SpawnedCommandResult | Error) {
@@ -75,6 +75,25 @@ test("command runner preserves a nonzero probe exit code", async () => {
         stdout: "",
         stderr: "cannot connect",
     });
+});
+
+test("command runner merges command environment additions for an external provider", async () => {
+    const fixture = createSpawner({
+        code: 0,
+        stdout: "podman-compose version 1.3.0\n",
+        stderr: "",
+    });
+
+    await new SpawnCommandRunner({ spawn: fixture.spawn }).run({
+        file: "podman",
+        args: [ "--url", "unix:///run/podman/podman.sock", "compose", "version" ],
+        env: { CONTAINER_HOST: "unix:///run/podman/podman.sock" },
+    });
+
+    assert.equal(fixture.calls[0].options.env?.CONTAINER_HOST, "unix:///run/podman/podman.sock");
+    const inheritedEntry = Object.entries(process.env).find((entry) => entry[1] !== undefined);
+    assert.ok(inheritedEntry);
+    assert.equal(fixture.calls[0].options.env?.[inheritedEntry[0]], inheritedEntry[1]);
 });
 
 test("command runner converts a thrown spawn failure to a nonzero result", async () => {

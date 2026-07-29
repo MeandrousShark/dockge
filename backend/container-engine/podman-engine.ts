@@ -30,7 +30,12 @@ export class PodmanEngine implements ContainerEngine {
         if (args[0] !== "compose") {
             throw new Error("Compose commands must begin with the compose subcommand");
         }
-        return this.build(args);
+        // `podman compose` delegates to an external provider. The Podman CLI's
+        // --url flag is not inherited by podman-compose, so pass the configured
+        // remote endpoint through the provider's documented environment.
+        return this.build(args, this.config.socket === undefined ? undefined : {
+            CONTAINER_HOST: this.config.socket,
+        });
     }
 
     composeList(): EngineCommand {
@@ -52,7 +57,7 @@ export class PodmanEngine implements ContainerEngine {
         return this.build([ "stats", "--format", "json", "--no-stream" ]);
     }
 
-    private build(args: readonly string[]): EngineCommand {
-        return command(this.binary, [ ...this.globalArgs, ...args ]);
+    private build(args: readonly string[], env?: Readonly<Record<string, string>>): EngineCommand {
+        return command(this.binary, [ ...this.globalArgs, ...args ], env);
     }
 }
