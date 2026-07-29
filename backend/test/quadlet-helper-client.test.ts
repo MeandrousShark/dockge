@@ -13,6 +13,10 @@ import {
     QuadletHelperRequestError,
 } from "../quadlet-helper/client";
 
+// The deployed helper and its AF_UNIX transport are Linux-only. Keep the
+// configuration and Docker-disabled tests below runnable on Windows CI.
+const skipUnixSocketTests = process.platform === "win32";
+
 const capabilities = {
     helperVersion: "1.0.0",
     buildID: "test-build",
@@ -80,7 +84,7 @@ function validResponse(overrides: Record<string, unknown> = {}) {
     };
 }
 
-test("Quadlet helper client negotiates framed read-only capabilities", async () => {
+test("Quadlet helper client negotiates framed read-only capabilities", { skip: skipUnixSocketTests }, async () => {
     await withHelper((socket) => {
         socket.once("data", () => socket.end(frame(validResponse())));
     }, async (socketPath) => {
@@ -101,7 +105,7 @@ test("Quadlet helper client negotiates framed read-only capabilities", async () 
     });
 });
 
-test("Quadlet helper probe remains unavailable when the socket is absent", async () => {
+test("Quadlet helper probe remains unavailable when the socket is absent", { skip: skipUnixSocketTests }, async () => {
     const status = await detectQuadletHelperStatus("podman", {
         DOCKGE_QUADLET_HELPER_SOCKET: "/tmp/dockge-quadlet-helper-missing.sock",
     });
@@ -109,7 +113,7 @@ test("Quadlet helper probe remains unavailable when the socket is absent", async
     assert.deepEqual(status, { state: "unavailable" });
 });
 
-test("Quadlet helper probe requires the complete Gate 4 read-only operation set", async () => {
+test("Quadlet helper probe requires the complete Gate 4 read-only operation set", { skip: skipUnixSocketTests }, async () => {
     await withHelper((socket) => {
         socket.once("data", () => socket.end(frame(validResponse({
             result: {
@@ -126,7 +130,7 @@ test("Quadlet helper probe requires the complete Gate 4 read-only operation set"
     });
 });
 
-test("Quadlet helper status is re-probed after a helper restart", async () => {
+test("Quadlet helper status is re-probed after a helper restart", { skip: skipUnixSocketTests }, async () => {
     let requestCount = 0;
     await withHelper((socket) => {
         socket.once("data", () => {
@@ -146,7 +150,7 @@ test("Quadlet helper status is re-probed after a helper restart", async () => {
     });
 });
 
-test("Quadlet helper client rejects malformed and oversized response frames", async (t) => {
+test("Quadlet helper client rejects malformed and oversized response frames", { skip: skipUnixSocketTests }, async (t) => {
     await t.test("malformed JSON", async () => {
         await withHelper((socket) => {
             const payload = Buffer.from("{not json", "utf8");
@@ -176,7 +180,7 @@ test("Quadlet helper client rejects malformed and oversized response frames", as
     });
 });
 
-test("Quadlet helper client rejects response IDs and versions that do not correlate", async (t) => {
+test("Quadlet helper client rejects response IDs and versions that do not correlate", { skip: skipUnixSocketTests }, async (t) => {
     await t.test("mismatched ID", async () => {
         await withHelper((socket) => {
             socket.once("data", () => socket.end(frame(validResponse({ id: "other" }))));
@@ -194,7 +198,7 @@ test("Quadlet helper client rejects response IDs and versions that do not correl
     });
 });
 
-test("Quadlet helper client times out and cancels a non-responsive connection", async () => {
+test("Quadlet helper client times out and cancels a non-responsive connection", { skip: skipUnixSocketTests }, async () => {
     await withHelper((socket) => {
         socket.once("data", () => undefined);
     }, async (socketPath) => {
