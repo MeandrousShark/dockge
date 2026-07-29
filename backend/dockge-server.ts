@@ -52,6 +52,8 @@ import {
 } from "./container-engine/container-engine";
 import type { ContainerEngine, ContainerEngineCapabilities } from "./container-engine/container-engine";
 import { SpawnCommandRunner } from "./container-engine/command-runner";
+import { detectQuadletHelperStatus } from "./quadlet-helper/client";
+import type { QuadletHelperStatus } from "./quadlet-helper/client";
 import {
     parseNetworkListOutput,
     parseStatsOutput,
@@ -65,6 +67,8 @@ export class DockgeServer {
     config : Config;
     containerEngine : ContainerEngine;
     containerEngineCapabilities?: ContainerEngineCapabilities;
+    quadletHelper: QuadletHelperStatus = Object.freeze({ state: "disabled" });
+    quadletHelperProbe?: Promise<QuadletHelperStatus>;
     indexHTML : string = "";
 
     /**
@@ -450,6 +454,11 @@ export class DockgeServer {
             log.warn("container-engine", warning);
         }
 
+        // The helper is optional and applies only to Podman endpoints. Its
+        // status is informational in Gate 4, so a missing or incompatible
+        // local socket must never prevent Compose from starting.
+        await this.refreshQuadletHelperStatus();
+
         // First time setup if needed
         let jwtSecretBean = await R.findOne("setting", " `key` = ? ", [
             "jwtSecret",
@@ -512,6 +521,10 @@ export class DockgeServer {
      * @returns
      */
     async sendInfo(socket : Socket, hideVersion = false) {
+        if (!hideVersion) {
+            await this.refreshQuadletHelperStatus();
+        }
+
         let versionProperty;
         let latestVersionProperty;
         let isContainer;
@@ -539,9 +552,28 @@ export class DockgeServer {
                 ...(this.containerEngineCapabilities?.composeProviderVersion === undefined ? {} : { composeProviderVersion: this.containerEngineCapabilities.composeProviderVersion }),
                 warnings: this.containerEngineCapabilities?.warnings ?? [],
             };
+            info.quadletHelper = this.quadletHelper;
         }
 
         socket.emit("info", info);
+    }
+
+    /** Refresh optional helper capability state without overlapping probes. */
+    async refreshQuadletHelperStatus(): Promise<QuadletHelperStatus> {
+        if (this.quadletHelperProbe) {
+            return this.quadletHelperProbe;
+        }
+
+        const probe = detectQuadletHelperStatus(this.containerEngine.kind);
+        this.quadletHelperProbe = probe;
+        try {
+            this.quadletHelper = await probe;
+            return this.quadletHelper;
+        } finally {
+            if (this.quadletHelperProbe === probe) {
+                this.quadletHelperProbe = undefined;
+            }
+        }
     }
 
     /**

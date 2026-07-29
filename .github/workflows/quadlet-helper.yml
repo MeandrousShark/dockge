@@ -1,0 +1,108 @@
+name: Quadlet Helper CI
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'quadlet-helper/**'
+      - 'packaging/dockge-quadlet-helper/**'
+      - '.github/workflows/quadlet-helper.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'quadlet-helper/**'
+      - 'packaging/dockge-quadlet-helper/**'
+      - '.github/workflows/quadlet-helper.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+    working-directory: quadlet-helper
+
+jobs:
+  test:
+    name: Linux Go checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: quadlet-helper/go.mod
+          cache: false
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Check packaging scripts
+        run: ../packaging/check.sh
+      - name: Vet
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+      - name: Race test
+        run: go test -race ./...
+
+  build:
+    name: Build linux/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: quadlet-helper/go.mod
+          cache: false
+      - name: Build static helper twice
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          SOURCE_DATE_EPOCH: '0'
+        run: |
+          mkdir -p ../dist/build-a ../dist/build-b
+          build_flags=(-trimpath -buildvcs=false -ldflags "-s -w -X main.helperVersion=0.1.0-dev -X main.buildID=${{ github.sha }}")
+          go build "${build_flags[@]}" -o "../dist/build-a/dockge-quadlet-helper-linux-${GOARCH}" ./cmd/dockge-quadlet-helper
+          go build "${build_flags[@]}" -o "../dist/build-b/dockge-quadlet-helper-linux-${GOARCH}" ./cmd/dockge-quadlet-helper
+          sha256sum "../dist/build-a/dockge-quadlet-helper-linux-${GOARCH}" "../dist/build-b/dockge-quadlet-helper-linux-${GOARCH}"
+          cmp -- "../dist/build-a/dockge-quadlet-helper-linux-${GOARCH}" "../dist/build-b/dockge-quadlet-helper-linux-${GOARCH}"
+          mv "../dist/build-a/dockge-quadlet-helper-linux-${GOARCH}" "../dist/dockge-quadlet-helper-linux-${GOARCH}"
+      - name: Record checksum
+        working-directory: dist
+        run: sha256sum "dockge-quadlet-helper-linux-${{ matrix.goarch }}" > "dockge-quadlet-helper-linux-${{ matrix.goarch }}.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dockge-quadlet-helper-linux-${{ matrix.goarch }}
+          path: |
+            dist/dockge-quadlet-helper-linux-${{ matrix.goarch }}
+            dist/dockge-quadlet-helper-linux-${{ matrix.goarch }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  checksums:
+    name: Publish combined checksums
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: dockge-quadlet-helper-linux-*
+          merge-multiple: true
+      - name: Verify and combine checksums
+        working-directory: artifacts
+        run: |
+          sha256sum --check dockge-quadlet-helper-linux-amd64.sha256
+          sha256sum --check dockge-quadlet-helper-linux-arm64.sha256
+          cat dockge-quadlet-helper-linux-amd64.sha256 dockge-quadlet-helper-linux-arm64.sha256 > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dockge-quadlet-helper-checksums
+          path: artifacts/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14

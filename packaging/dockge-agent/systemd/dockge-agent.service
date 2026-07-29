@@ -1,0 +1,40 @@
+[Unit]
+Description=Dockge agent-only endpoint
+After=network-online.target podman.socket
+Wants=network-online.target podman.socket
+ConditionPathExists=/run/podman/podman.sock
+
+[Service]
+Type=simple
+User=dockge
+Group=dockge
+SupplementaryGroups=dockge-podman
+WorkingDirectory=/opt/dockge-agent/current
+EnvironmentFile=/etc/dockge/agent.env
+ExecCondition=/usr/bin/test -S /run/podman/podman.sock
+ExecStart=/usr/local/bin/node --import tsx /opt/dockge-agent/current/backend/index.ts
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=30s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/dockge-agent /var/lib/dockge-agent/stacks
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Dockge Quadlet Helper socket
+
+[Socket]
+ListenStream=/run/dockge-quadlet-helper.sock
+SocketUser=root
+SocketGroup=dockge-quadlet
+SocketMode=0660
+Accept=no
+RemoveOnStop=yes
+Service=dockge-quadlet-helper.service
+
+[Install]
+WantedBy=sockets.target

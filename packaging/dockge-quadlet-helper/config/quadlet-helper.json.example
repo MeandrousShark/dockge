@@ -1,0 +1,11 @@
+{
+  "allowedPeerUid": __DOCKGE_UID__,
+  "roots": {
+    "admin": "/etc/containers/systemd",
+    "runtime": "/run/containers/systemd",
+    "distribution": "/usr/share/containers/systemd"
+  },
+  "generatorPath": "/usr/lib/systemd/system-generators/podman-system-generator",
+  "systemctlPath": "/usr/bin/systemctl",
+  "journalctlPath": "/usr/bin/journalctl"
+}

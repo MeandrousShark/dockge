@@ -1,0 +1,43 @@
+[Unit]
+Description=Dockge Quadlet Helper
+Requires=dockge-quadlet-helper.socket
+After=dockge-quadlet-helper.socket
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/opt/dockge-quadlet-helper/current/dockge-quadlet-helper --config /etc/dockge/quadlet-helper.json
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=15s
+RuntimeDirectory=dockge-quadlet-helper
+RuntimeDirectoryMode=0700
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+# Gate 4 is read-only: Gate 6 may add the narrowly required write path after
+# the manifest and transaction acceptance work is complete.
+ReadOnlyPaths=-/etc/containers/systemd -/run/containers/systemd -/usr/share/containers/systemd
+ReadWritePaths=/run/dockge-quadlet-helper
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+CapabilityBoundingSet=
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

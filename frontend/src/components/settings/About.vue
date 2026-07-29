@@ -18,6 +18,10 @@
                         <dd class="col-sm-7">{{ entry.info.composeProvider || $t("notAvailableShort") }}</dd>
                         <dt class="col-sm-5">{{ $t("Compose Provider Version") }}</dt>
                         <dd class="col-sm-7">{{ entry.info.composeProviderVersion || $t("notAvailableShort") }}</dd>
+                        <template v-if="entry.quadletHelper && entry.quadletHelper.state !== 'disabled'">
+                            <dt class="col-sm-5">{{ $t("Quadlet Helper") }}</dt>
+                            <dd class="col-sm-7">{{ quadletHelperStatus(entry.quadletHelper.state) }}</dd>
+                        </template>
                     </dl>
                     <div v-if="entry.info.warnings && entry.info.warnings.length" class="alert alert-warning py-2 mb-0 small" role="alert">
                         <div class="fw-bold">{{ $t("Capability Warnings") }}</div>
@@ -68,6 +72,7 @@ export default {
                     endpoint: "",
                     name: this.$t("currentEndpoint"),
                     info: current,
+                    quadletHelper: this.$root.info.quadletHelper,
                 });
             }
 
@@ -77,6 +82,7 @@ export default {
                         endpoint,
                         name: this.$root.endpointDisplayFunction(endpoint) || endpoint,
                         info: info.containerEngine,
+                        quadletHelper: info.quadletHelper,
                     });
                 }
             }
@@ -92,6 +98,16 @@ export default {
             }
 
             return kind.charAt(0).toUpperCase() + kind.slice(1);
+        },
+        quadletHelperStatus(state) {
+            if (state === "read-only") {
+                return this.$t("Quadlet Helper Read-Only");
+            }
+            if (state === "incompatible") {
+                return this.$t("Quadlet Helper Incompatible");
+            }
+
+            return this.$t("Quadlet Helper Unavailable");
         },
     },
 };
