@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
     ContainerEngineConfigError,
+    commandEnvironment,
     createContainerEngine,
     detectContainerEngineCapabilities,
     parseContainerEngineConfig,
@@ -145,6 +146,9 @@ test("raw Compose commands preserve global environment-file ordering", () => {
     assert.deepEqual(engine.composeCommand(composeArgs), {
         file: "podman",
         args: [ "--url", "unix:///run/podman/podman.sock", ...composeArgs ],
+        env: {
+            CONTAINER_HOST: "unix:///run/podman/podman.sock",
+        },
     });
     assert.deepEqual(composeArgs, [ "compose", "--env-file", "../global.env", "--env-file", "./.env", "up", "-d" ]);
     assert.throws(() => engine.composeCommand([ "up", "-d" ]), Error);
@@ -161,6 +165,9 @@ test("Podman builds the same normalized operations with Podman's remote socket f
     assert.deepEqual(engine.compose("restart", "web"), {
         file: "podman",
         args: [ "--url", "unix:///run/podman/podman.sock", "compose", "restart", "web" ],
+        env: {
+            CONTAINER_HOST: "unix:///run/podman/podman.sock",
+        },
     });
     assert.deepEqual(engine.composeList(), {
         file: "podman",
@@ -194,6 +201,29 @@ test("resolved commands and their argv are immutable snapshots", () => {
     });
 });
 
+test("Podman Compose propagates only its configured remote socket to the provider", () => {
+    const engine = createContainerEngine(parseContainerEngineConfig({
+        DOCKGE_CONTAINER_ENGINE: "podman",
+        DOCKGE_CONTAINER_ENGINE_SOCKET: "unix:///run/podman/podman.sock",
+    }));
+    const command = engine.compose("up", "-d");
+
+    assert.deepEqual(command.env, {
+        CONTAINER_HOST: "unix:///run/podman/podman.sock",
+    });
+    assert.ok(Object.isFrozen(command.env));
+    assert.deepEqual(commandEnvironment(command, {
+        PATH: "/usr/bin",
+        CONTAINER_HOST: "unix:///wrong.sock",
+    }), {
+        PATH: "/usr/bin",
+        CONTAINER_HOST: "unix:///run/podman/podman.sock",
+    });
+    assert.equal(commandEnvironment(createContainerEngine(parseContainerEngineConfig({
+        DOCKGE_CONTAINER_ENGINE: "docker",
+    })).compose("up"), { PATH: "/usr/bin" }), undefined);
+});
+
 test("capability detection reports selected engine and Compose provider versions", async () => {
     const engine = createContainerEngine(parseContainerEngineConfig({
         DOCKGE_CONTAINER_ENGINE: "podman",
@@ -218,7 +248,8 @@ test("capability detection reports selected engine and Compose provider versions
         { file: "podman",
             args: [ "--url", "unix:///run/podman/podman.sock", "version", "--format", "{{.Client.Version}}" ] },
         { file: "podman",
-            args: [ "--url", "unix:///run/podman/podman.sock", "compose", "version" ] },
+            args: [ "--url", "unix:///run/podman/podman.sock", "compose", "version" ],
+            env: { CONTAINER_HOST: "unix:///run/podman/podman.sock" } },
     ]);
 });
 

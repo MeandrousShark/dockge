@@ -46,6 +46,7 @@ import { ManageAgentSocketHandler } from "./socket-handlers/manage-agent-socket-
 import { Terminal } from "./terminal";
 import {
     createContainerEngine,
+    commandEnvironment,
     detectContainerEngineCapabilities,
     parseContainerEngineConfig,
 } from "./container-engine/container-engine";
@@ -717,8 +718,10 @@ export class DockgeServer {
 
     async getDockerNetworkList() : Promise<string[]> {
         const command = this.containerEngine.networkList();
+        const env = commandEnvironment(command);
         let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
             encoding: "utf-8",
+            ...(env === undefined ? {} : { env }),
         });
 
         if (!res.stdout) {
@@ -733,8 +736,10 @@ export class DockgeServer {
 
         try {
             const command = this.containerEngine.stats();
+            const env = commandEnvironment(command);
             let res = await childProcessAsync.spawn(command.file, [ ...command.args ], {
                 encoding: "utf-8",
+                ...(env === undefined ? {} : { env }),
             });
 
             if (!res.stdout) {

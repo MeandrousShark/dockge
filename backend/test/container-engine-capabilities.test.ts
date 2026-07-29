@@ -98,6 +98,7 @@ test("Podman capability detection parses JSON-style version output and retains t
         {
             file: "/usr/bin/podman",
             args: [ "--url", "unix:///run/podman/podman.sock", "compose", "version" ],
+            env: { CONTAINER_HOST: "unix:///run/podman/podman.sock" },
         },
     ]);
 });

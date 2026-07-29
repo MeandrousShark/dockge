@@ -154,9 +154,26 @@ export function createContainerEngine(config: ContainerEngineConfig): ContainerE
 }
 
 /** Build an immutable command result without exposing mutable argv arrays. */
-export function command(file: string, args: readonly string[]): EngineCommand {
+export function command(file: string, args: readonly string[], env?: Readonly<Record<string, string>>): EngineCommand {
     return Object.freeze({
         file,
         args: Object.freeze([ ...args ]),
+        ...(env === undefined ? {} : { env: Object.freeze({ ...env }) }),
     });
+}
+
+/**
+ * Build the process environment for an engine command without changing the
+ * caller's process environment. Commands without additions retain spawn's
+ * default environment behaviour.
+ */
+export function commandEnvironment(command: EngineCommand, baseEnvironment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv | undefined {
+    if (command.env === undefined) {
+        return undefined;
+    }
+
+    return {
+        ...baseEnvironment,
+        ...command.env,
+    };
 }
