@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
     ContainerEngineConfigError,
     commandEnvironment,
@@ -186,6 +189,59 @@ test("Podman builds the same normalized operations with Podman's remote socket f
         args: [ "--url", "unix:///run/podman/podman.sock", "stats", "--format", "json", "--no-stream" ],
     });
     assert.ok(Object.isFrozen(engine.stats().args));
+});
+
+test("Podman preserves Docker Compose environment precedence with its single-file provider", () => {
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), "dockge-podman-env-"));
+    const stackDir = path.join(workspace, "stack");
+    fs.mkdirSync(stackDir);
+    fs.writeFileSync(path.join(workspace, "global.env"), "GLOBAL=global\nOVERRIDE=global\n");
+    fs.writeFileSync(path.join(stackDir, ".env"), "LOCAL=local\nOVERRIDE=local\n");
+
+    try {
+        const engine = createContainerEngine(parseContainerEngineConfig({
+            DOCKGE_CONTAINER_ENGINE: "podman",
+            DOCKGE_CONTAINER_ENGINE_SOCKET: "unix:///run/podman/podman.sock",
+        }));
+        const command = engine.composeCommand([
+            "compose",
+            "--env-file", "../global.env",
+            "--env-file", "./.env",
+            "up", "-d",
+        ], stackDir);
+
+        assert.deepEqual(command, {
+            file: "podman",
+            args: [ "--url", "unix:///run/podman/podman.sock", "compose", "--env-file", "./.env", "up", "-d" ],
+            envDefaults: {
+                GLOBAL: "global",
+                LOCAL: "local",
+                OVERRIDE: "local",
+            },
+            env: {
+                CONTAINER_HOST: "unix:///run/podman/podman.sock",
+            },
+        });
+        assert.ok(Object.isFrozen(command.envDefaults));
+        assert.deepEqual(commandEnvironment(command, {
+            GLOBAL: "host",
+            LOCAL: "host",
+            OVERRIDE: "host",
+            CONTAINER_HOST: "unix:///wrong.sock",
+            UNRELATED: "preserved",
+        }), {
+            GLOBAL: "host",
+            LOCAL: "host",
+            OVERRIDE: "host",
+            UNRELATED: "preserved",
+            CONTAINER_HOST: "unix:///run/podman/podman.sock",
+        });
+    } finally {
+        fs.rmSync(workspace, {
+            recursive: true,
+            force: true,
+        });
+    }
 });
 
 test("resolved commands and their argv are immutable snapshots", () => {

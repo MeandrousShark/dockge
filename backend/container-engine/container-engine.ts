@@ -36,7 +36,7 @@ export interface ContainerEngine {
 
     version(): EngineCommand;
     compose(command: string, ...args: string[]): EngineCommand;
-    composeCommand(args: readonly string[]): EngineCommand;
+    composeCommand(args: readonly string[], workingDirectory?: string): EngineCommand;
     composeList(): EngineCommand;
     containerStatus(projectName: string): EngineCommand;
     networkList(): EngineCommand;
@@ -154,10 +154,16 @@ export function createContainerEngine(config: ContainerEngineConfig): ContainerE
 }
 
 /** Build an immutable command result without exposing mutable argv arrays. */
-export function command(file: string, args: readonly string[], env?: Readonly<Record<string, string>>): EngineCommand {
+export function command(
+    file: string,
+    args: readonly string[],
+    env?: Readonly<Record<string, string>>,
+    envDefaults?: Readonly<Record<string, string>>,
+): EngineCommand {
     return Object.freeze({
         file,
         args: Object.freeze([ ...args ]),
+        ...(envDefaults === undefined ? {} : { envDefaults: Object.freeze({ ...envDefaults }) }),
         ...(env === undefined ? {} : { env: Object.freeze({ ...env }) }),
     });
 }
@@ -168,11 +174,12 @@ export function command(file: string, args: readonly string[], env?: Readonly<Re
  * default environment behaviour.
  */
 export function commandEnvironment(command: EngineCommand, baseEnvironment: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv | undefined {
-    if (command.env === undefined) {
+    if (command.envDefaults === undefined && command.env === undefined) {
         return undefined;
     }
 
     return {
+        ...command.envDefaults,
         ...baseEnvironment,
         ...command.env,
     };

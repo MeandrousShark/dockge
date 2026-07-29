@@ -25,6 +25,7 @@ export class Terminal {
     protected file : string;
     protected args : string | string[];
     protected cwd : string;
+    protected envDefaults? : Readonly<Record<string, string>>;
     protected env? : Readonly<Record<string, string>>;
     protected callback? : (exitCode : number) => void;
 
@@ -37,13 +38,14 @@ export class Terminal {
 
     protected socketList : Record<string, DockgeSocket> = {};
 
-    constructor(server : DockgeServer, name : string, file : string, args : string | string[], cwd : string, env?: Readonly<Record<string, string>>) {
+    constructor(server : DockgeServer, name : string, file : string, args : string | string[], cwd : string, envDefaults?: Readonly<Record<string, string>>, env?: Readonly<Record<string, string>>) {
         this.server = server;
         this._name = name;
         //this._name = "terminal-" + Date.now() + "-" + getCryptoRandomInt(0, 1000000);
         this.file = file;
         this.args = args;
         this.cwd = cwd;
+        this.envDefaults = envDefaults;
         this.env = env;
 
         Terminal.terminalMap.set(this.name, this);
@@ -119,8 +121,9 @@ export class Terminal {
                 cwd: this.cwd,
                 cols: TERMINAL_COLS,
                 rows: this.rows,
-                ...(this.env === undefined ? {} : {
+                ...(this.envDefaults === undefined && this.env === undefined ? {} : {
                     env: {
+                        ...this.envDefaults,
                         ...process.env,
                         ...this.env,
                     },
@@ -220,16 +223,16 @@ export class Terminal {
         return Terminal.terminalMap.get(name);
     }
 
-    public static getOrCreateTerminal(server : DockgeServer, name : string, file : string, args : string | string[], cwd : string, env?: Readonly<Record<string, string>>) : Terminal {
+    public static getOrCreateTerminal(server : DockgeServer, name : string, file : string, args : string | string[], cwd : string, envDefaults?: Readonly<Record<string, string>>, env?: Readonly<Record<string, string>>) : Terminal {
         // Since exited terminal will be removed from the map, it is safe to get the terminal from the map
         let terminal = Terminal.getTerminal(name);
         if (!terminal) {
-            terminal = new Terminal(server, name, file, args, cwd, env);
+            terminal = new Terminal(server, name, file, args, cwd, envDefaults, env);
         }
         return terminal;
     }
 
-    public static exec(server : DockgeServer, socket : DockgeSocket | undefined, terminalName : string, file : string, args : string | string[], cwd : string, env?: Readonly<Record<string, string>>) : Promise<number> {
+    public static exec(server : DockgeServer, socket : DockgeSocket | undefined, terminalName : string, file : string, args : string | string[], cwd : string, envDefaults?: Readonly<Record<string, string>>, env?: Readonly<Record<string, string>>) : Promise<number> {
         return new Promise((resolve, reject) => {
             // check if terminal exists
             if (Terminal.terminalMap.has(terminalName)) {
@@ -237,7 +240,7 @@ export class Terminal {
                 return;
             }
 
-            let terminal = new Terminal(server, terminalName, file, args, cwd, env);
+            let terminal = new Terminal(server, terminalName, file, args, cwd, envDefaults, env);
             terminal.rows = PROGRESS_TERMINAL_ROWS;
 
             if (socket) {

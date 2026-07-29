@@ -22,7 +22,7 @@ export class DockerEngine implements ContainerEngine {
         return this.composeCommand([ "compose", subcommand, ...args ]);
     }
 
-    composeCommand(args: readonly string[]): EngineCommand {
+    composeCommand(args: readonly string[], _workingDirectory?: string): EngineCommand {
         if (args[0] !== "compose") {
             throw new Error("Compose commands must begin with the compose subcommand");
         }

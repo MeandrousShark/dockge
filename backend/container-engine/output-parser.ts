@@ -191,15 +191,37 @@ export function parseComposePsOutput(stdout: string): ComposePsOutput[] {
         const Service = stringField(record, "Service");
         const State = stringField(record, "State");
         const Name = stringField(record, "Name");
-        if (!Service || State === undefined || !Name) {
+        if (Service && State !== undefined && Name) {
+            const Health = stringField(record, "Health");
+            return [{
+                Service,
+                State,
+                Name,
+                ...(Health === undefined ? {} : { Health }),
+            }];
+        }
+
+        if (record.IsInfra === true || State === undefined) {
+            return [];
+        }
+
+        const labels = record.Labels;
+        const podmanService = isRecord(labels)
+            ? stringField(labels, "com.docker.compose.service")
+            : undefined;
+        const names = record.Names;
+        const podmanName = Array.isArray(names)
+            ? names.find((name): name is string => typeof name === "string" && name !== "")
+            : undefined;
+        if (!podmanService || !podmanName) {
             return [];
         }
 
         const Health = stringField(record, "Health");
         return [{
-            Service,
+            Service: podmanService,
             State,
-            Name,
+            Name: podmanName,
             ...(Health === undefined ? {} : { Health }),
         }];
     });

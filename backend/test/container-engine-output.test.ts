@@ -87,6 +87,36 @@ test("Compose ps output accepts both JSON array and newline-delimited JSON", () 
     assert.deepEqual(parseComposePsOutput(rows.map((row) => JSON.stringify(row)).join("\n")), rows);
 });
 
+test("Compose ps output normalizes Podman service labels and names", () => {
+    const output = JSON.stringify([
+        { State: "running",
+            Names: [ "demo-probe-1" ],
+            Labels: { "com.docker.compose.service": "probe" } },
+        { State: "running",
+            Names: [ "infra" ],
+            Labels: { "com.docker.compose.service": "probe" },
+            IsInfra: true },
+        { State: "running",
+            Names: [ 1, "demo-worker-1" ],
+            Labels: { "com.docker.compose.service": "worker" } },
+        { State: "running",
+            Names: [],
+            Labels: { "com.docker.compose.service": "missing-name" } },
+        { State: "running",
+            Names: [ "missing-service-1" ],
+            Labels: {} },
+    ]);
+
+    assert.deepEqual(parseComposePsOutput(output), [
+        { Service: "probe",
+            State: "running",
+            Name: "demo-probe-1" },
+        { Service: "worker",
+            State: "running",
+            Name: "demo-worker-1" },
+    ]);
+});
+
 test("direct container ps output accepts newline-delimited JSON", () => {
     const rows = [
         { ID: "abc123",

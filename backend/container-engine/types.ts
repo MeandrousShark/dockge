@@ -26,8 +26,13 @@ export interface EngineCommand {
     readonly file: string;
     readonly args: readonly string[];
     /**
-     * Environment additions required by the selected command. Values here are
-     * merged with the process environment immediately before spawning.
+     * Environment defaults required by the selected command. Inherited process
+     * values may override these defaults.
+     */
+    readonly envDefaults?: Readonly<Record<string, string>>;
+    /**
+     * Environment overrides required by the selected command. Values here win
+     * over inherited process values immediately before spawning.
      */
     readonly env?: Readonly<Record<string, string>>;
 }
