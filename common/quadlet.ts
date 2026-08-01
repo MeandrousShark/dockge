@@ -20,6 +20,17 @@ export interface QuadletResource extends QuadletResourceSelector {
     readonly readOnly: true;
 }
 
+/** Whether this external resource has a generated unit that systemd can inspect. */
+export function isMonitorableQuadletResource(resource: QuadletResource): boolean {
+    return resource.ownership === "external"
+        && resource.readOnly === true
+        && resource.fileKind === "regular"
+        && (resource.resourceType === "container" || resource.resourceType === "network" || resource.resourceType === "volume")
+        && resource.unitId !== undefined
+        && resource.unitId.length > 0
+        && resource.shadowedBy === undefined;
+}
+
 export interface QuadletSystemdProperties {
     readonly Id?: string;
     readonly Description?: string;

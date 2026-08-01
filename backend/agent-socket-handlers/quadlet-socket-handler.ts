@@ -6,6 +6,7 @@ import {
     QuadletResource,
     QuadletResourceSelector,
     QuadletStatus,
+    isMonitorableQuadletResource,
 } from "../../common/quadlet";
 import { AgentSocketHandler } from "../agent-socket-handler";
 import { DockgeServer } from "../dockge-server";
@@ -66,7 +67,7 @@ export class QuadletSocketHandler extends AgentSocketHandler {
             try {
                 checkLogin(socket);
                 await this.requireReadOnlyHelper(server);
-                const resources = await this.createClient().list();
+                const resources = (await this.createClient().list()).filter(isMonitorableQuadletResource);
                 callbackResult({ ok: true,
                     resources }, callback);
             } catch (error) {

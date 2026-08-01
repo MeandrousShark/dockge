@@ -20,6 +20,7 @@ const resource: QuadletResource = {
     ...selector,
     resourceType: "container",
     fileKind: "regular",
+    unitId: "caddy.service",
     ownership: "external",
     readOnly: true,
 };
@@ -57,6 +58,7 @@ class FakeSocket extends EventEmitter {
 
 class FakeClient implements QuadletReadOnlyClient {
     listCalls = 0;
+    resources: readonly QuadletResource[] = [ resource ];
     statusCalls: QuadletResourceSelector[] = [];
     journalCalls: Array<{ selector: QuadletResourceSelector; options: QuadletJournalOptions }> = [];
     journalEvents: readonly QuadletJournalEvent[] = [];
@@ -64,7 +66,7 @@ class FakeClient implements QuadletReadOnlyClient {
 
     async list() {
         this.listCalls += 1;
-        return [ resource ];
+        return this.resources;
     }
 
     async status(value: QuadletResourceSelector): Promise<QuadletStatus> {
@@ -193,6 +195,80 @@ test("Quadlet socket events refresh and require the complete read-only helper ca
     await invoke(fresh.agentSocket, "quadletList");
     await invoke(fresh.agentSocket, "quadletStatus", selector);
     assert.equal(fresh.getRefreshes(), 2);
+});
+
+test("Quadlet list exposes only monitorable external source units to the browser", async () => {
+    const client = new FakeClient();
+    const network: QuadletResource = {
+        root: "runtime",
+        sourceName: "edge.network",
+        resourceType: "network",
+        fileKind: "regular",
+        unitId: "edge-network.service",
+        ownership: "external",
+        readOnly: true,
+    };
+    const volume: QuadletResource = {
+        root: "distribution",
+        sourceName: "state.volume",
+        resourceType: "volume",
+        fileKind: "regular",
+        unitId: "state-volume.service",
+        ownership: "external",
+        readOnly: true,
+    };
+    const nonExternal = {
+        ...resource,
+        sourceName: "non-external.container",
+        ownership: "managed",
+    } as unknown as QuadletResource;
+    const writable = {
+        ...network,
+        sourceName: "writable.network",
+        readOnly: false,
+    } as unknown as QuadletResource;
+    client.resources = [
+        resource,
+        network,
+        volume,
+        { ...resource,
+            sourceName: "caddy.env",
+            resourceType: "unsupported",
+            unitId: undefined },
+        { ...resource,
+            sourceName: "tls.key",
+            resourceType: "unsupported",
+            unitId: undefined },
+        { ...resource,
+            sourceName: "ignored.container",
+            fileKind: "directory",
+            unitId: undefined },
+        { ...network,
+            sourceName: "alias.network",
+            fileKind: "symlink",
+            unitId: undefined },
+        { ...volume,
+            sourceName: "socket.volume",
+            fileKind: "irregular",
+            unitId: undefined },
+        { ...resource,
+            sourceName: "unmapped.container",
+            unitId: undefined },
+        { ...network,
+            sourceName: "empty.network",
+            unitId: "" },
+        { ...volume,
+            sourceName: "shadowed.volume",
+            shadowedBy: "admin" },
+        nonExternal,
+        writable,
+    ];
+
+    const fixture = createFixture({ client,
+        userID: 1 });
+    const result = await invoke(fixture.agentSocket, "quadletList");
+    assert.deepEqual(result, { ok: true,
+        resources: [ resource, network, volume ] });
 });
 
 test("Quadlet status validates fixed logical resource selectors", async () => {
