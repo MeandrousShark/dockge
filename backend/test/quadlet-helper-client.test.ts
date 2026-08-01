@@ -10,6 +10,7 @@ import {
     parseQuadletHelperConfig,
     QuadletHelperClient,
     QuadletHelperConfigError,
+    QuadletHelperOperationError,
     QuadletHelperRequestError,
 } from "../quadlet-helper/client";
 
@@ -82,6 +83,25 @@ function validResponse(overrides: Record<string, unknown> = {}) {
         result: capabilities,
         ...overrides,
     };
+}
+
+const resource = {
+    root: "admin",
+    sourceName: "example.container",
+    supported: true,
+    fileKind: "regular",
+    size: 42,
+    sha256: "a".repeat(64),
+    unitId: "example.service",
+    managed: false,
+};
+
+function response(id: string, result: unknown) {
+    return { version: 1,
+        id,
+        type: "result",
+        ok: true,
+        result };
 }
 
 test("Quadlet helper client negotiates framed read-only capabilities", { skip: skipUnixSocketTests }, async () => {
@@ -219,4 +239,151 @@ test("helper startup probe is quiet for Docker and does not fail on invalid Podm
     assert.throws(() => parseQuadletHelperConfig({
         DOCKGE_QUADLET_HELPER_SOCKET: "not-an-absolute-path",
     }), QuadletHelperConfigError);
+});
+
+test("Quadlet helper client uses only the typed list and status contracts", { skip: skipUnixSocketTests }, async (t) => {
+    await t.test("list normalizes every resource as external read-only metadata", async () => {
+        await withHelper((socket) => {
+            socket.once("data", () => socket.end(frame(response("quadlet_list", { resources: [ resource ] }))));
+        }, async (socketPath) => {
+            const resources = await new QuadletHelperClient({ socketPath }).list();
+            assert.deepEqual(resources, [{
+                root: "admin",
+                sourceName: "example.container",
+                resourceType: "container",
+                fileKind: "regular",
+                size: 42,
+                sha256: "a".repeat(64),
+                unitId: "example.service",
+                ownership: "external",
+                readOnly: true,
+            }]);
+        });
+    });
+
+    await t.test("status accepts the fixed systemd property list only", async () => {
+        await withHelper((socket) => {
+            socket.once("data", () => socket.end(frame(response("quadlet_status", {
+                resource,
+                properties: { Id: "example.service",
+                    ActiveState: "active" },
+            }))));
+        }, async (socketPath) => {
+            const status = await new QuadletHelperClient({ socketPath }).status({ root: "admin",
+                sourceName: "example.container" });
+            assert.equal(status.properties.ActiveState, "active");
+            assert.equal(status.resource.ownership, "external");
+        });
+    });
+
+    await t.test("rejects unsupported result fields and typed helper errors", async () => {
+        await withHelper((socket) => {
+            socket.once("data", () => socket.end(frame(response("quadlet_status", {
+                resource,
+                properties: { ActiveState: "active",
+                    ArbitraryProperty: "no" },
+            }))));
+        }, async (socketPath) => {
+            await assert.rejects(new QuadletHelperClient({ socketPath }).status({ root: "admin",
+                sourceName: "example.container" }), (error: unknown) => error instanceof QuadletHelperRequestError && error.kind === "protocol");
+        });
+        await withHelper((socket) => {
+            socket.once("data", () => socket.end(frame({
+                version: 1,
+                id: "quadlet_list",
+                type: "error",
+                ok: false,
+                error: {
+                    code: "busy",
+                    message: "busy",
+                    retryable: true,
+                },
+            })));
+        }, async (socketPath) => {
+            await assert.rejects(new QuadletHelperClient({ socketPath }).list(), (error: unknown) => error instanceof QuadletHelperOperationError && error.code === "busy" && error.retryable);
+        });
+    });
+});
+
+test("Quadlet helper journal validates stream order, completion, and cancellation", { skip: skipUnixSocketTests }, async (t) => {
+    await t.test("delivers bounded records, heartbeat, then strict completion", async () => {
+        await withHelper((socket) => {
+            socket.once("data", () => socket.end(Buffer.concat([
+                frame({ version: 1,
+                    id: "quadlet_journal",
+                    type: "event",
+                    event: "journal.record",
+                    sequence: 1,
+                    data: { message: "line" } }),
+                frame({ version: 1,
+                    id: "quadlet_journal",
+                    type: "event",
+                    event: "journal.heartbeat",
+                    sequence: 2,
+                    data: {} }),
+                frame(response("quadlet_journal", { records: 1,
+                    complete: true })),
+            ])));
+        }, async (socketPath) => {
+            const events = [];
+            for await (const event of new QuadletHelperClient({ socketPath }).journal({ root: "admin",
+                sourceName: "example.container" }, { lines: 1 })) {
+                events.push(event);
+            }
+            assert.deepEqual(events, [
+                { type: "record",
+                    sequence: 1,
+                    data: { message: "line",
+                        truncated: false } },
+                { type: "heartbeat",
+                    sequence: 2,
+                    data: {} },
+                { type: "complete",
+                    records: 1,
+                    complete: true },
+            ]);
+        });
+    });
+
+    await t.test("rejects a skipped sequence and tears down on AbortSignal", async () => {
+        await withHelper((socket) => {
+            socket.once("data", () => socket.end(frame({
+                version: 1,
+                id: "quadlet_journal",
+                type: "event",
+                event: "journal.heartbeat",
+                sequence: 2,
+                data: {},
+            })));
+        }, async (socketPath) => {
+            const stream = new QuadletHelperClient({ socketPath }).journal({ root: "admin",
+                sourceName: "example.container" }, { lines: 1 });
+            await assert.rejects(stream.next(), (error: unknown) => error instanceof QuadletHelperRequestError && error.kind === "protocol");
+        });
+        let peerClosed = false;
+        let markRequest!: () => void;
+        const receivedRequest = new Promise<void>((resolve) => {
+            markRequest = resolve;
+        });
+        await withHelper((socket) => {
+            socket.once("data", () => {
+                socket.once("close", () => {
+                    peerClosed = true;
+                });
+                markRequest();
+            });
+        }, async (socketPath) => {
+            const controller = new AbortController();
+            const stream = new QuadletHelperClient({ socketPath }).journal({ root: "admin",
+                sourceName: "example.container" }, { lines: 1,
+                follow: true,
+                signal: controller.signal });
+            const pending = stream.next();
+            await receivedRequest;
+            controller.abort();
+            await assert.rejects(pending, (error: unknown) => error instanceof QuadletHelperRequestError && error.kind === "cancelled");
+            await new Promise((resolve) => setTimeout(resolve, 5));
+        });
+        assert.equal(peerClosed, true);
+    });
 });

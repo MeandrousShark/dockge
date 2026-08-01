@@ -7,6 +7,7 @@ import DashboardHome from "./pages/DashboardHome.vue";
 import Console from "./pages/Console.vue";
 import Compose from "./pages/Compose.vue";
 import ContainerTerminal from "./pages/ContainerTerminal.vue";
+import Quadlets from "./pages/Quadlets.vue";
 import { useToast } from "vue-toastification";
 const toast = useToast();
 
@@ -56,6 +57,10 @@ const routes = [
                                 name: "containerTerminalEndpoint",
                             },
                         ]
+                    },
+                    {
+                        path: "/quadlets",
+                        component: Quadlets,
                     },
                     {
                         path: "/console",

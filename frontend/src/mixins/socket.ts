@@ -26,6 +26,7 @@ export default defineComponent({
 
             },
             agentInfo: {} as Record<string, object>,
+            quadletJournalListeners: new Set<(event: unknown) => void>(),
             remember: (localStorage.remember !== "0"),
             loggedIn: false,
             allowLoginDialog: false,
@@ -271,6 +272,12 @@ export default defineComponent({
                 }
             });
 
+            agentSocket.on("quadletJournalEvent", (event) => {
+                for (const listener of this.quadletJournalListeners) {
+                    listener(event);
+                }
+            });
+
             socket.on("stackStatusList", (res) => {
                 if (res.ok) {
                     for (let stackName in res.stackStatusList) {
@@ -315,6 +322,11 @@ export default defineComponent({
 
         emitAgent(endpoint : string, eventName : string, ...args : unknown[]) {
             this.getSocket().emit("agent", endpoint, eventName, ...args);
+        },
+
+        addQuadletJournalListener(listener : (event: unknown) => void) {
+            this.quadletJournalListeners.add(listener);
+            return () => this.quadletJournalListeners.delete(listener);
         },
 
         /**

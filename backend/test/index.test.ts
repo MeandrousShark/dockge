@@ -8,3 +8,4 @@ import "./stack-filesystem.test";
 import "./stack-compose-operations.test";
 import "./agent-service-token.test";
 import "./quadlet-helper-client.test";
+import "./quadlet-socket-handler.test";
