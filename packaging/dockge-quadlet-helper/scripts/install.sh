@@ -105,7 +105,6 @@ install -o root -g root -m 0644 "${SCRIPT_DIR}/../systemd/${SOCKET_UNIT}" "/etc/
 install -o root -g root -m 0644 "${SCRIPT_DIR}/../systemd/${SERVICE_UNIT}" "/etc/systemd/system/${SERVICE_UNIT}"
 verify_release "${release_id}"
 systemctl daemon-reload
-verify_unit_files
 previous_release=''
 if current_release_id >/dev/null 2>&1; then
     previous_release="$(current_release_id)"
@@ -127,6 +126,7 @@ restore_on_activation_failure() {
 trap restore_on_activation_failure ERR
 activation_started=true
 switch_current_release "${release_id}"
+verify_unit_files
 systemctl enable --now "${SOCKET_UNIT}"
 systemctl is-active --quiet "${SOCKET_UNIT}"
 systemctl restart "${SERVICE_UNIT}"

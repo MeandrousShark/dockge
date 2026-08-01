@@ -24,8 +24,6 @@ require_command runuser
 require_command systemctl
 verify_release "$(current_release_id)"
 systemctl is-active --quiet "${SOCKET_UNIT}"
-systemctl restart "${SERVICE_UNIT}"
-systemctl is-active --quiet "${SERVICE_UNIT}"
 id -nG dockge | tr ' ' '\n' | grep -Fx 'dockge-quadlet' >/dev/null || die 'dockge has not refreshed into dockge-quadlet; re-login or restart dockge-agent.service'
 
 read -r -d '' capability_smoke <<'PY' || true
@@ -72,6 +70,7 @@ if (
 print("helper capability smoke: ok")
 PY
 runuser -u dockge -- python3 -c "${capability_smoke}"
+systemctl is-active --quiet "${SERVICE_UNIT}"
 
 if [[ "${restart_endpoint}" == true ]]; then
     systemctl restart dockge-agent.service

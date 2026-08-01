@@ -81,6 +81,14 @@ if [[ "${activate}" == true ]]; then
     grep -Eq '^DOCKGE_ENABLE_CONSOLE=false$' "${ENV_PATH}" || die 'the Dockge console must remain disabled'
     grep -Eq '^DOCKGE_AGENT_TOKEN_SHA256=[0-9a-f]{64}$' "${ENV_PATH}" || die 'agent environment needs a 64-character lowercase SHA-256 digest, never a raw token'
     grep -Eq '^DOCKGE_AGENT_ENDPOINT_ID=[^[:space:]]+:[0-9]+$' "${ENV_PATH}" || die 'agent endpoint identity must include an explicit port'
+    service_was_active=false
+    if systemctl is-active --quiet "${UNIT}"; then
+        service_was_active=true
+    fi
+    service_was_enabled=false
+    if systemctl is-enabled --quiet "${UNIT}"; then
+        service_was_enabled=true
+    fi
     previous_release=''
     if [[ -L "${CURRENT_LINK}" ]]; then
         current_target="$(readlink -- "${CURRENT_LINK}")"
@@ -99,7 +107,16 @@ if [[ "${activate}" == true ]]; then
             else
                 rm -f -- "${CURRENT_LINK}"
             fi
-            systemctl restart "${UNIT}" >/dev/null 2>&1 || true
+            if [[ "${service_was_enabled}" == true ]]; then
+                systemctl enable "${UNIT}" >/dev/null 2>&1 || true
+            else
+                systemctl disable "${UNIT}" >/dev/null 2>&1 || true
+            fi
+            if [[ "${service_was_active}" == true ]]; then
+                systemctl restart "${UNIT}" >/dev/null 2>&1 || true
+            else
+                systemctl stop "${UNIT}" >/dev/null 2>&1 || true
+            fi
         fi
         exit "${status}"
     }
@@ -108,7 +125,12 @@ if [[ "${activate}" == true ]]; then
     activation_started=true
     ln -s "releases/${release_id}" "${temporary_link}"
     mv -Tf -- "${temporary_link}" "${CURRENT_LINK}"
-    systemctl enable --now "${UNIT}"
+    if [[ "${service_was_active}" == true ]]; then
+        systemctl enable "${UNIT}"
+        systemctl restart "${UNIT}"
+    else
+        systemctl enable --now "${UNIT}"
+    fi
     systemctl is-active --quiet "${UNIT}"
     activation_started=false
     trap - ERR

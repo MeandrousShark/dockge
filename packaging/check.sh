@@ -7,6 +7,7 @@ ROOT_DIR="$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd -P)"
 scripts=(
     "${ROOT_DIR}/packaging/dockge-quadlet-helper/scripts/"*.sh
     "${ROOT_DIR}/packaging/dockge-agent/scripts/"*.sh
+    "${ROOT_DIR}/packaging/test-lifecycle.sh"
 )
 
 bash -n "${scripts[@]}"
@@ -26,3 +27,5 @@ config = json.loads(template.replace("__DOCKGE_UID__", "1001"))
 assert config["allowedPeerUid"] == 1001
 assert set(config["roots"]) == {"admin", "runtime", "distribution"}
 PY
+
+"${ROOT_DIR}/packaging/test-lifecycle.sh"
